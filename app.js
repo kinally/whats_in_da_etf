@@ -27,7 +27,15 @@ function renderAll() {
 /* ---------- Header ---------- */
 function renderHeader(pkg) {
   document.getElementById("etfCode").textContent = pkg.fundCode;
-  document.getElementById("etfName").textContent = pkg.etfName || "ETF";
+  // 有 ETF 名称就显示，没有就只显示代码
+  const nameEl = document.getElementById("etfName");
+  if (pkg.etfName) {
+    nameEl.textContent = pkg.etfName;
+    nameEl.style.display = "";
+  } else {
+    nameEl.textContent = "";
+    nameEl.style.display = "none";
+  }
   document.getElementById("fetchDate").innerHTML = "📅 " + escapeHtml(pkg.fetchedAt);
 }
 
@@ -45,14 +53,15 @@ function renderStats(data) {
 
 /* ---------- Top 5 Holdings ---------- */
 function renderTopHoldings(data) {
-  const totalQty = data.reduce((s, d) => s + parseNum(d.QUANTITY), 0);
-  const sorted = [...data].sort((a, b) => parseNum(b.QUANTITY) - parseNum(a.QUANTITY));
+  const sorted = [...data].sort((a, b) => parseNum(b.SUBSTITUTION_CASH_AMOUNT) - parseNum(a.SUBSTITUTION_CASH_AMOUNT));
   const top5 = sorted.slice(0, 5);
+  const totalAmt = data.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
   const list = document.getElementById("topList");
   list.innerHTML = top5.map((item, i) => {
     const rankEmoji = ["🥇","🥈","🥉","4️⃣","5️⃣"][i] || `${i+1}.`;
-    const pct = totalQty > 0 ? (parseNum(item.QUANTITY) / totalQty * 100) : 0;
+    const amt = parseNum(item.SUBSTITUTION_CASH_AMOUNT);
+    const pct = totalAmt > 0 ? (amt / totalAmt * 100) : 0;
     return `
       <div class="top-item">
         <span class="top-rank">${rankEmoji}</span>
@@ -115,12 +124,16 @@ function renderTable(data, sortKey_, sortAsc_) {
 document.addEventListener("click", function(e) {
   const th = e.target.closest("th[data-sort]");
   if (!th) return;
-  const key = th.dataset.sort;
-  if (key === sortKey) sortAsc = !sortAsc;
-  else { sortKey = key; sortAsc = true; }
-  const query = document.getElementById("searchBox").value;
-  const filtered = filterData(allData, query);
-  renderTable(filtered, sortKey, sortAsc);
+  try {
+    const key = th.dataset.sort;
+    if (key === sortKey) sortAsc = !sortAsc;
+    else { sortKey = key; sortAsc = true; }
+    const query = document.getElementById("searchBox").value;
+    const filtered = filterData(allData, query);
+    renderTable(filtered, sortKey, sortAsc);
+  } catch (err) {
+    console.error("排序出错:", err);
+  }
 });
 
 /* ---------- 搜索过滤 ---------- */
@@ -184,7 +197,11 @@ async function reloadLatest() {
       components: rows
     };
     allData = rows;
-    // 不清空搜索框，方便连续查询不同代码
+    // 如果搜索框里是刚才查询的ETF代码，清空它（避免排序时被过滤成空表）
+    const sb = document.getElementById("searchBox");
+    if (sb && sb.value.trim() === code) {
+      sb.value = "";
+    }
     renderAll();
   } catch (e) {
     alert("❌ 刷新失败: " + e.message);

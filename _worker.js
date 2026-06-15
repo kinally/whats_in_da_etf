@@ -93,13 +93,19 @@ async function querySZSE(fundCode) {
       },
     });
     if (!resp.ok) {
-      return jsonResponse({ ok: false, error: `深交所数据文件不存在 (HTTP ${resp.status})` }, 502);
+      return jsonResponse({ ok: false, error: `深交所暂无 ${fundCode} 今日数据文件 (HTTP ${resp.status})` }, 502);
     }
 
-    // GBK → UTF-8 解码
-    const buf = await resp.arrayBuffer();
-    const dec = new TextDecoder('gbk');
-    const text = dec.decode(buf);
+    // 获取原始字节，尝试 GBK 解码（深交所文件为 GBK 编码）
+    let text;
+    try {
+      const buf = await resp.arrayBuffer();
+      text = new TextDecoder('gbk').decode(buf);
+    } catch (_) {
+      // TextDecoder 不支持 gbk 时，回退到默认 UTF-8
+      const buf = await resp.arrayBuffer();
+      text = new TextDecoder('utf-8').decode(buf);
+    }
 
     const rows = parseSZSEText(text, fundCode);
 
@@ -110,7 +116,7 @@ async function querySZSE(fundCode) {
       count: (rows._components || []).length,
     });
   } catch (err) {
-    return jsonResponse({ ok: false, error: err.message }, 502);
+    return jsonResponse({ ok: false, error: `深交所查询失败: ${err.message}` }, 502);
   }
 }
 
