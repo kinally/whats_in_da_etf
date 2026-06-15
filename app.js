@@ -27,7 +27,7 @@ function renderAll() {
 /* ---------- Header ---------- */
 function renderHeader(pkg) {
   document.getElementById("etfCode").textContent = pkg.fundCode;
-  // 有 ETF 名称就显示，没有就只显示代码
+  // ETF 名称
   const nameEl = document.getElementById("etfName");
   if (pkg.etfName) {
     nameEl.textContent = pkg.etfName;
@@ -36,7 +36,23 @@ function renderHeader(pkg) {
     nameEl.textContent = "";
     nameEl.style.display = "none";
   }
-  document.getElementById("fetchDate").innerHTML = "📅 " + escapeHtml(pkg.fetchedAt);
+  // 实时价格
+  const priceEl = document.getElementById("etfPrice");
+  if (pkg.price != null) {
+    const sign = pkg.priceChange >= 0 ? "+" : "";
+    const color = pkg.priceChange > 0 ? "#ef4444" : pkg.priceChange < 0 ? "#22c55e" : "var(--text1)";
+    priceEl.innerHTML = `
+      <span class="price-value">${pkg.price.toFixed(3)}</span>
+      <span class="price-change" style="color:${color}">${sign}${pkg.priceChange.toFixed(3)} ${sign}${pkg.priceChangePct.toFixed(2)}%</span>
+    `;
+    priceEl.style.display = "";
+  } else {
+    priceEl.style.display = "none";
+  }
+  // 更新时间
+  const now = new Date();
+  const timeStr = now.toLocaleString("zh-CN", { hour12: false });
+  document.getElementById("fetchDate").innerHTML = "📅 " + escapeHtml(pkg.fetchedAt) + " &nbsp;⏰ " + timeStr;
 }
 
 /* ---------- Stats ---------- */
@@ -193,6 +209,9 @@ async function reloadLatest() {
     fullPackage = {
       fundCode: code,
       etfName: data.etfName || "",
+      price: data.price,
+      priceChange: data.priceChange,
+      priceChangePct: data.priceChangePct,
       fetchedAt: new Date().toISOString().slice(0, 10),
       components: rows
     };
