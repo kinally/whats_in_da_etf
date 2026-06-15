@@ -44,23 +44,15 @@ async function querySSE(fundCode) {
   }
   const { rows, enriched } = compResult.value;
 
-  // 行情数据（可选，失败不影响成分股展示）
+  // 名称数据（可选，失败不影响成分股展示）
   let etfName = '';
-  let price = null, priceChange = null, priceChangePct = null;
   if (quoteResult.status === 'fulfilled' && quoteResult.value) {
-    const q = quoteResult.value;
-    etfName = q.name || '';
-    price = q.price;
-    priceChange = q.change;
-    priceChangePct = q.changePct;
+    etfName = quoteResult.value.name || '';
   }
 
   return jsonResponse({
     ok: true,
     etfName,
-    price,
-    priceChange,
-    priceChangePct,
     rows: enriched,
     count: enriched.length,
   });
@@ -104,46 +96,20 @@ async function fetchComponents(fundCode) {
   return { rows, enriched };
 }
 
-/* ---------- 拉取 ETF 名称+实时行情 ---------- */
+/* ---------- 拉取 ETF 名称 ---------- */
 async function fetchQuote(fundCode) {
-  // 接口 1：东财 suggest（几乎不会被封，稳定返回基金名称）
-  let name = '';
   try {
-    const r1 = await fetch(
+    const resp = await fetch(
       `https://searchadapter.eastmoney.com/api/suggest/get?input=${fundCode}&count=1&type=14`,
       { headers: { 'User-Agent': 'Mozilla/5.0' } },
     );
-    if (r1.ok) {
-      const d1 = await r1.json();
-      if (d1?.QuotationCodeTable?.Data?.[0]?.Name) {
-        name = d1.QuotationCodeTable.Data[0].Name;
-      }
-    }
-  } catch (_) { /* suggest 失败只影响名称 */ }
-
-  // 接口 2：东财 push2 实时行情（CF 可能被封，失败静默）
-  let price = null, change = null, changePct = null;
-  try {
-    const r2 = await fetch(
-      `https://push2.eastmoney.com/api/qt/stock/get?secid=1.${fundCode}&fltt=2&fields=f43,f169,f170&_=${Date.now()}`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-          Referer: 'https://quote.eastmoney.com/',
-        },
-      },
-    );
-    if (r2.ok) {
-      const d2 = await r2.json();
-      if (d2?.data) {
-        price = d2.data.f43 != null ? d2.data.f43 / 1000 : null;
-        change = d2.data.f169 != null ? d2.data.f169 / 1000 : null;
-        changePct = d2.data.f170 != null ? d2.data.f170 / 100 : null;
-      }
-    }
-  } catch (_) { /* push2 不可用时无价格 */ }
-
-  return { name, price, change, changePct };
+    if (!resp.ok) return { name: '' };
+    const data = await resp.json();
+    const name = data?.QuotationCodeTable?.Data?.[0]?.Name || '';
+    return { name };
+  } catch (_) {
+    return { name: '' };
+  }
 }
 
 /* ========== JSON 响应工具 ========== */

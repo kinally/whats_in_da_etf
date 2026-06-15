@@ -1,177 +1,94 @@
-# ETF 成分股查看器 — Cloudflare Pages 版
+# ETF 成分股查看器 — Cloudflare Workers 版
 
-> 🏠 **本版本无需 Python 后端**，可直接部署到 Cloudflare Pages 上运行。
-> 适合在公司电脑、平板、手机上直接访问使用。
+> 🏠 **纯前端 + Cloudflare Workers 部署**，无需 Python 后端。
+> 在搜索框输入上交所 ETF 代码（5 开头），点刷新即可实时查询成分股。
 
-## 🗺️ 部署总览
+## 🗺️ 架构
 
 ```
-你电脑 (本地)   ───push──→   GitHub 仓库   ───→   Cloudflare Pages (全球 CDN)
-                                                      │
-                                                      ├─ 静态文件 (index.html / app.js / style.css)
-                                                      └─ Function  ─→ 上交所 API (实时数据)
+浏览器                   Cloudflare Workers
+ ┌──────┐   /api/query    ┌──────────────────────┐
+ │ 页面  │ ──────────────→ │  _worker.js           │
+ │      │ ←────────────── │  ├─ 上交所 query.sse   │
+ │      │   JSON          │  └─ 东财 suggest(名称) │
+ └──────┘                 └──────────────────────┘
 ```
 
-## 📋 前置条件
+## ✅ 已实现功能
 
-| 项目 | 说明 |
+| 功能 | 说明 |
 |------|------|
-| GitHub 账号 | 没有的话去 [github.com](https://github.com) 免费注册一个 |
-| Cloudflare 账号 | 没有的话去 [dash.cloudflare.com](https://dash.cloudflare.com) 免费注册 |
-| 本机 Git | 已安装（`git --version` 验证） |
-| 网络 | 🏠 在家操作就行，不需要公司网络 |
-
----
-
-## 🚀 部署步骤（手把手）
-
-### 第 1 步：在 GitHub 上新建仓库
-
-1. 浏览器打开 https://github.com/new
-2. **Repository name** 填 `sse-etf-cf`
-3. 选 **Public**（免费就行，Private 也可以）
-4. 其他全部默认，点 **Create repository**
-
-### 第 2 步：把本文件夹推送到 GitHub
-
-打开你电脑的终端（命令提示符或 PowerShell），依次执行：
-
-```bash
-# 进入 CF 项目目录
-cd F:\AtomCode\sse_etf_monitor_cf
-
-# 初始化 Git 仓库
-git init
-
-# 添加所有文件
-git add .
-
-# 提交
-git commit -m "🎉 init: ETF 成分股查看器 CF 版"
-
-# 关联 GitHub 仓库
-# （把 yourname 换成你的 GitHub 用户名）
-git remote add origin https://github.com/yourname/sse-etf-cf.git
-
-# 推送到 GitHub
-git push -u origin main
-```
-
-> 🔑 如果提示登录，按提示在浏览器中登录 GitHub 授权即可。
-
-### 第 3 步：在 Cloudflare Pages 部署
-
-1. 浏览器打开 https://dash.cloudflare.com/ → 登录
-2. 左侧菜单选 **Workers & Pages**
-3. 点 **Pages** 标签（不是 Workers）
-4. 点蓝色按钮 **连接到 Git**
-5. 如果没连过 GitHub，点 **连接 GitHub** → 授权 Cloudflare 访问你的仓库
-6. 在弹出的仓库列表中找到 `sse-etf-cf` → 点 **开始设置**
-
-### 第 4 步：构建设置
-
-| 设置项 | 值 |
-|--------|-----|
-| 项目名称 | 自动生成，也可以改成 `sse-etf` |
-| 框架预设 | **None** |
-| 构建命令 | **留空**（不需要） |
-| 构建输出目录 | **`/`**（根目录，默认就是这个） |
-| 根目录 | **留空** |
-
-其他都不用管 → 点 **保存并部署**
-
-### 第 5 步：等待部署完成
-
-⏳ 等大约 30 秒，看到绿色 **✅ 部署成功** 就搞定了。
-
-点那个 **访问站点** 按钮（或者分配给你的域名，类似 `sse-etf-xxx.pages.dev`），就能看到页面了。
-
----
-
-## ✅ 验证功能
-
-| 功能 | 怎么测试 | 预期结果 |
-|------|---------|---------|
-| 初始数据 | 打开页面 | 显示成分股列表 |
-| 🔍 搜索 | 在搜索框输入股票代码 | 表格实时过滤 |
-| 🏆 前五大权重 | 看页面顶部 | 按权重排序显示前 5 |
-| 🔄 实时刷新 | 点 **刷新** 按钮 | 等待片刻，数据更新（右上角日期变化） |
-| 📥 导出 CSV | 点 **导出 CSV** | 浏览器下载一个 CSV 文件，可用 Excel 打开 |
-
----
+| 📋 ETF 成分股展示 | 代码 / 名称 / 数量 / 替代金额 / 金额占比 / 市场 |
+| 🏆 Top 5 权重 | 按替代金额排序的前五大持仓 |
+| 🔍 搜索过滤 | 在搜索框输入股票代码或名称实时过滤表格 |
+| 🔄 实时刷新 | 搜索框输入 ETF 代码 → 点刷新，调上交所接口拉最新数据 |
+| 🏷️ ETF 名称 | 自动从东方财富 suggest 接口获取 |
+| 📥 导出 CSV | 含替代金额占比，文件名带日期 |
+| ↗️ 列头排序 | 点击任意列表头排序（金额占比按替代金额排序） |
 
 ## 📁 文件结构
 
 ```
 sse_etf_monitor_cf/
-├── index.html              # 🌐 主页面
-├── style.css               # 🎨 样式表
-├── app.js                  # ⚡ 前端逻辑（搜索/排序/导出/刷新）
+├── _worker.js          # 🔌 Cloudflare Workers 入口（路由 + API 代理）
+├── wrangler.jsonc      # ⚙️  Workers 配置
+├── .assetsignore       # 排除 Worker 文件被当作静态资源
+├── index.html          # 🌐 主页面
+├── style.css           # 🎨 样式表
+├── app.js              # ⚡ 前端逻辑（搜索/排序/导出/刷新）
 ├── data/
-│   └── latest.js           # 📦 初始成分股快照（静态数据）
-├── functions/
-│   └── api/
-│       └── query.js        # 🔌 Cloudflare Function — 代理上交所实时接口
-└── README.md               # 📖 本说明文件
+│   └── latest.js       # 📦 初始成分股快照（静态数据）
+├── .gitignore
+└── README.md
 ```
 
----
+## 🔧 使用说明
 
-## 🔧 后续维护
+### 查询 ETF 成分股
+1. 在 **搜索框** 输入上交所 ETF 代码（如 `513310`、`517520`、`588310`）
+2. 点 **🔄 刷新** 按钮
+3. 等待 1-3 秒，成分股列表和 ETF 名称自动更新
 
-### 更新初始快照
+### 搜索成分股
+- 在搜索框输入股票代码或名称关键字，表格实时过滤
 
-如果你从 Python 版导出新的 JSON 快照，想替换 CF 版的初始数据：
+### 导出 CSV
+- 点 **📥 导出 CSV**，下载含金额占比的 CSV 文件（UTF-8 BOM）
 
-```bash
-# 1. 把导出的 JSON 复制到 data/ 目录下
-# 2. 手动编辑 data/latest.js，把文件内容改成：
-window.__ETF_LATEST = { ...你的 JSON 数据... };
+## 📝 待更新
 
-# 3. 推送到 GitHub
-git add .
-git commit -m "📦 更新初始快照"
-git push
-```
+- [ ] **深交所支持** — 深交所 ETF（15/16 开头）的数据文件为 GBK 编码 TSV 格式，需完善 Worker 解析
+- [ ] **实时价格** — 东财 push2 行情接口从 CF Workers 无法连通，需要找其他方案
+- [ ] **ETF 名称缓存** — 目前每次刷新都调东财 suggest 接口，可考虑缓存减少请求
+- [ ] **多代码对比** — 同时查看多只 ETF 的成分股对比
+- [ ] **历史快照** — 保留不同日期的成分股数据，支持回溯对比
+- [ ] **移动端优化** — 表格在手机上显示稍挤，可进一步适配
 
-CF 会自动重新部署，约 1 分钟后生效。
-
-### 修改基金代码
-
-默认监控 `513310`，如果想改成别的 ETF：
-
-- 编辑 `data/latest.js` 里的 `fundCode` 字段
-- 编辑 `functions/api/query.js` 第 10 行的默认值 `"513310"`
-- 提交推送即可
-
-### 本地预览（可选）
-
-需要安装 Wrangler CLI：
+## 🔧 本地开发
 
 ```bash
+# 安装 wrangler
+npm install -g wrangler
+
+# 本地预览
 npx wrangler pages dev . --port 8800
+
+# 部署
+npx wrangler deploy
 ```
-
-然后浏览器访问 http://localhost:8800
-
----
 
 ## ❓ 常见问题
 
-**Q: 点刷新后等很久才出数据？**
-A: CF 免费版有冷启动，第一次请求需要 1–3 秒加载 Function 运行环境。之后再用就快了。你也可以在 Cloudflare Dashboard 把这个项目升级到付费 Worker（$5/月）就没冷启动了。
+**Q: 刷新后 ETF 名称不显示？**
+A: 东财 suggest 接口偶尔限流，不影响成分股数据，再次刷新即可。
+
+**Q: 搜索框输入 ETF 代码后表格空了？**
+A: 正常——搜索框同时用于过滤成分股，输入 6 位代码可能不匹配任何成分股。点刷新即可查询该 ETF。
 
 **Q: 页面空白 / 没有数据？**
 A: 检查浏览器控制台（F12 → Console）有没有报错。常见原因：
-- 部署时构建输出目录没选对（应该是 `/`）
 - `data/latest.js` 文件缺失
+- CF 部署失败（检查 Dashboard 构建日志）
 
-**Q: 可以在手机上访问吗？**
-A: 可以！部署成功后给你的那个 `*.pages.dev` 链接在任何浏览器都能打开，手机平板都行。
-
-**Q: 公司电脑能访问吗？**
-A: 可以，CF 部署在全球 CDN 上，任何有网络的设备都能打开。**但「刷新」功能依赖 CF Function 去抓上交所——如果公司网络限制了出口，Function 是跑在 CF 服务器上的，不影响。**
-
----
-
-> 💡 有任何问题，回家继续搞就行，这堆文件扔这儿跑不了。
+**Q: 可以查深交所 ETF 吗？**
+A: 暂不支持。当前仅支持上交所 5 开头的 ETF。
