@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETF 成分股查看器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app" id="app">
+  
+  <!-- Header -->
+  <header class="header" id="appHeader">
+    <div class="header-top">
+      <h1 class="etf-code" id="etfCode">--</h1>
+      <span class="etf-name" id="etfName">--</span>
+      <span class="fetch-date" id="fetchDate">📅 <span>--</span></span>
+    </div>
+  </header>
+
+  <!-- Stats Cards -->
+  <section class="stats" id="statsSection">
+    <div class="stat-card">
+      <span class="stat-icon">📊</span>
+      <span class="stat-value" id="statTotal">--</span>
+      <span class="stat-label">成分股总数</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-icon">🏛️</span>
+      <span class="stat-value" id="statSse">--</span>
+      <span class="stat-label">上交所</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-icon">🏢</span>
+      <span class="stat-value" id="statSzse">--</span>
+      <span class="stat-label">深交所</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-icon">🌍</span>
+      <span class="stat-value" id="statOversea">--</span>
+      <span class="stat-label">境外</span>
+    </div>
+  </section>
+
+  <!-- Top Holdings -->
+  <section class="top-holdings" id="topSection">
+    <h2 class="section-title">🏆 前 5 大权重</h2>
+    <div class="top-list" id="topList"></div>
+  </section>
+
+  <!-- Full Table -->
+  <section class="table-section">
+    <h2 class="section-title">📋 全部成分股</h2>
+    <div class="table-controls">
+      <span class="table-hint">点击列头排序</span>
+      <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索代码或名称..." oninput="filterTable()">
+      <button class="reload-btn" onclick="reloadLatest()">🔄 刷新</button>
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table" id="dataTable">
+        <thead>
+          <tr>
+            <th data-sort="INSTRUMENT_ID">代码 <span class="sort-arrow"></span></th>
+            <th data-sort="INSTRUMENT_NAME">名称 <span class="sort-arrow"></span></th>
+            <th data-sort="QUANTITY" class="num">数量 <span class="sort-arrow"></span></th>
+            <th class="num">占比</th>
+            <th data-sort="SUBSTITUTION_CASH_AMOUNT" class="num">替代金额(元) <span class="sort-arrow"></span></th>
+            <th data-sort="_MARKET_CN">市场 <span class="sort-arrow"></span></th>
+            <th data-sort="CREATION_PREMIUM_RATE">申购溢价 <span class="sort-arrow"></span></th>
+            <th data-sort="REDEMPTION_DISCOUNT_RATE">赎回折价 <span class="sort-arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-actions">
+      <label class="file-btn">
+        📂 载入历史数据
+        <input type="file" accept=".json" onchange="loadFromFile(event)" hidden>
+      </label>
+      <button class="export-btn" onclick="exportData()">📥 导出 CSV</button>
+    </div>
+    <p class="footer-note">数据来源：上交所 query.sse.com.cn</p>
+  </footer>
+</div>
+
+<!-- Latest data auto-loaded via script (静态快照；点"刷新"按钮实时抓取上交所最新数据) -->
+<script src="data/latest.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
