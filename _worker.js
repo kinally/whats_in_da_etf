@@ -104,37 +104,46 @@ async function fetchComponents(fundCode) {
   return { rows, enriched };
 }
 
-/* ---------- 拉取 ETF 行情（名称+实时价格） ---------- */
+/* ---------- 拉取 ETF 名称+实时行情 ---------- */
 async function fetchQuote(fundCode) {
-  // 尝试多个接口，任一成功即返回
-  const apis = [
-    // 东财行情接口 1
-    `https://push2.eastmoney.com/api/qt/stock/get?secid=1.${fundCode}&fltt=2&fields=f43,f57,f58,f169,f170`,
-    // 东财行情接口 2（带时间戳防缓存）
-    `https://push2.eastmoney.com/api/qt/stock/get?secid=1.${fundCode}&fields=f43,f57,f58,f169,f170&_=${Date.now()}`,
-  ];
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    Referer: 'https://quote.eastmoney.com/',
-  };
-
-  for (const url of apis) {
-    try {
-      const resp = await fetch(url, { headers });
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      if (data && data.data && data.data.f58) {
-        const d = data.data;
-        return {
-          name: d.f58 || '',
-          price: d.f43 != null ? d.f43 / 1000 : null,
-          change: d.f169 != null ? d.f169 / 1000 : null,
-          changePct: d.f170 != null ? d.f170 / 100 : null,
-        };
+  // 接口 1：东财 suggest（几乎不会被封，稳定返回基金名称）
+  let name = '';
+  try {
+    const r1 = await fetch(
+      `https://searchadapter.eastmoney.com/api/suggest/get?input=${fundCode}&count=1&type=14`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' } },
+    );
+    if (r1.ok) {
+      const d1 = await r1.json();
+      if (d1?.QuotationCodeTable?.Data?.[0]?.Name) {
+        name = d1.QuotationCodeTable.Data[0].Name;
       }
-    } catch (_) { /* 尝试下一个 */ }
-  }
-  return null; // 所有接口均失败
+    }
+  } catch (_) { /* suggest 失败只影响名称 */ }
+
+  // 接口 2：东财 push2 实时行情（CF 可能被封，失败静默）
+  let price = null, change = null, changePct = null;
+  try {
+    const r2 = await fetch(
+      `https://push2.eastmoney.com/api/qt/stock/get?secid=1.${fundCode}&fltt=2&fields=f43,f169,f170&_=${Date.now()}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          Referer: 'https://quote.eastmoney.com/',
+        },
+      },
+    );
+    if (r2.ok) {
+      const d2 = await r2.json();
+      if (d2?.data) {
+        price = d2.data.f43 != null ? d2.data.f43 / 1000 : null;
+        change = d2.data.f169 != null ? d2.data.f169 / 1000 : null;
+        changePct = d2.data.f170 != null ? d2.data.f170 / 100 : null;
+      }
+    }
+  } catch (_) { /* push2 不可用时无价格 */ }
+
+  return { name, price, change, changePct };
 }
 
 /* ========== JSON 响应工具 ========== */
