@@ -53,9 +53,8 @@
   <section class="table-section">
     <h2 class="section-title">📋 全部成分股</h2>
     <div class="table-controls">
-      <span class="table-hint">点击列头排序</span>
-      <input type="text" class="code-input" id="codeInput" placeholder="ETF代码" value="513310">
-      <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索成分股代码或名称..." oninput="filterTable()">
+      <span class="table-hint">搜索框输入ETF代码点刷新查数据，或搜索成分股</span>
+      <input type="text" class="search-box" id="searchBox" placeholder="🔍 ETF代码 或 成分股代码/名称" oninput="filterTable()">
       <button class="reload-btn" onclick="reloadLatest()">🔄 刷新</button>
     </div>
     <div class="table-wrapper">

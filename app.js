@@ -162,9 +162,10 @@ function loadFromFile(event) {
 
 /* ---------- 刷新最新数据（调服务器 API 真实抓取） ---------- */
 async function reloadLatest() {
-  const codeInput = document.getElementById("codeInput");
-  const code = (codeInput && codeInput.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
-  if (!code) return alert("❌ 请输入或选择基金代码");
+  // 输入框有值就当作 ETF 代码查询，否则用当前基金代码
+  const searchBox = document.getElementById("searchBox");
+  const code = (searchBox && searchBox.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
+  if (!code) return alert("❌ 请在搜索框输入基金代码");
 
   const btn = document.querySelector(".reload-btn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ 刷新中..."; }
@@ -174,24 +175,16 @@ async function reloadLatest() {
     const data = await resp.json();
     if (!data.ok) throw new Error(data.error);
 
-    const MARKET_MAP = {"101": "上交所", "102": "深交所", "9999": "境外"};
-    const FLAG_MAP = {"0": "不允许替代", "1": "允许现金替代", "2": "必须现金替代"};
-
-    // 补齐中文标注字段
-    const rows = (data.rows || []).map(r => ({
-      ...r,
-      _MARKET_CN: MARKET_MAP[r.UNDERLYION_SECURITY_ID] || "其他",
-      _FLAG_CN: FLAG_MAP[r.SUBSTITUTION_FLAG] || r.SUBSTITUTION_FLAG || ""
-    }));
+    const rows = data.rows || [];
 
     fullPackage = {
       fundCode: code,
-      etfName: fullPackage ? fullPackage.etfName : "",
+      etfName: data.etfName || "",
       fetchedAt: new Date().toISOString().slice(0, 10),
       components: rows
     };
     allData = rows;
-    document.getElementById("searchBox").value = "";
+    // 不清空搜索框，方便连续查询不同代码
     renderAll();
   } catch (e) {
     alert("❌ 刷新失败: " + e.message);
