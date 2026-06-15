@@ -54,7 +54,8 @@
     <h2 class="section-title">📋 全部成分股</h2>
     <div class="table-controls">
       <span class="table-hint">点击列头排序</span>
-      <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索代码或名称..." oninput="filterTable()">
+      <input type="text" class="code-input" id="codeInput" placeholder="ETF代码" value="513310">
+      <input type="text" class="search-box" id="searchBox" placeholder="🔍 搜索成分股代码或名称..." oninput="filterTable()">
       <button class="reload-btn" onclick="reloadLatest()">🔄 刷新</button>
     </div>
     <div class="table-wrapper">
@@ -64,9 +65,8 @@
             <th data-sort="INSTRUMENT_ID">代码 <span class="sort-arrow"></span></th>
             <th data-sort="INSTRUMENT_NAME">名称 <span class="sort-arrow"></span></th>
             <th data-sort="QUANTITY" class="num">数量 <span class="sort-arrow"></span></th>
-            <th class="num">数量占比</th>
             <th data-sort="SUBSTITUTION_CASH_AMOUNT" class="num">替代金额(元) <span class="sort-arrow"></span></th>
-            <th class="num">金额占比</th>
+            <th data-sort="SUBSTITUTION_CASH_AMOUNT" class="num">金额占比 <span class="sort-arrow"></span></th>
             <th data-sort="_MARKET_CN">市场 <span class="sort-arrow"></span></th>
           </tr>
         </thead>

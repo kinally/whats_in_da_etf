@@ -184,6 +184,22 @@ body {
   transition: border-color 0.2s;
 }
 
+.code-input {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 14px;
+  width: 100px;
+  outline: none;
+  text-align: center;
+  font-weight: 600;
+  font-family: monospace;
+  transition: border-color 0.2s;
+}
+.code-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.3); }
+
 .search-box:focus { border-color: var(--accent); }
 .search-box::placeholder { color: var(--text2); }
 

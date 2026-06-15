@@ -72,7 +72,6 @@ function renderTable(data, sortKey_, sortAsc_) {
   sortKey = sortKey_ || sortKey;
   sortAsc = sortAsc_ !== undefined ? sortAsc_ : sortAsc;
 
-  const totalQty = data.reduce((s, d) => s + parseNum(d.QUANTITY), 0);
   const totalSubCash = data.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
   const sorted = [...data].sort((a, b) => {
@@ -91,13 +90,11 @@ function renderTable(data, sortKey_, sortAsc_) {
   tbody.innerHTML = sorted.map(item => {
     const mktClass = item._MARKET_CN === "上交所" ? "sse"
       : item._MARKET_CN === "深交所" ? "szse" : "oversea";
-    const qtyPct = totalQty > 0 ? (parseNum(item.QUANTITY) / totalQty * 100) : 0;
     const subCashPct = totalSubCash > 0 ? (parseNum(item.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100) : 0;
     return `<tr>
       <td>${escapeHtml(item.INSTRUMENT_ID)}</td>
       <td><strong>${escapeHtml(item.INSTRUMENT_NAME)}</strong></td>
       <td class="num">${fmtNum(item.QUANTITY)}</td>
-      <td class="num">${qtyPct.toFixed(2)}%</td>
       <td class="num">${fmtMoney(item.SUBSTITUTION_CASH_AMOUNT)}</td>
       <td class="num">${subCashPct.toFixed(2)}%</td>
       <td><span class="market-tag ${mktClass}">${escapeHtml(item._MARKET_CN)}</span></td>
@@ -165,8 +162,9 @@ function loadFromFile(event) {
 
 /* ---------- 刷新最新数据（调服务器 API 真实抓取） ---------- */
 async function reloadLatest() {
-  const code = fullPackage ? fullPackage.fundCode : "513310";
-  if (!code) return alert("❌ 没有基金代码");
+  const codeInput = document.getElementById("codeInput");
+  const code = (codeInput && codeInput.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
+  if (!code) return alert("❌ 请输入或选择基金代码");
 
   const btn = document.querySelector(".reload-btn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ 刷新中..."; }
@@ -221,9 +219,9 @@ function exportData() {
   const fetchedAt = pkg.fetchedAt || "";
 
   // 列头
-  const headers = ["代码", "名称", "数量", "数量占比", "替代金额(元)", "金额占比", "市场", "替代标志"];
+  const headers = ["代码", "名称", "数量", "替代金额(元)", "金额占比", "市场", "替代标志"];
   // 字段映射
-  const fields = ["INSTRUMENT_ID", "INSTRUMENT_NAME", "QUANTITY", "_QTY_PCT",
+  const fields = ["INSTRUMENT_ID", "INSTRUMENT_NAME", "QUANTITY",
                    "SUBSTITUTION_CASH_AMOUNT", "_SUB_CASH_PCT", "_MARKET_CN", "_FLAG_CN"];
 
   const esc = v => {
@@ -238,15 +236,12 @@ function exportData() {
     ""
   ];
 
-  // 计算总数量和总替代金额，用于占比
-  const totalQty = allData.reduce((s, d) => s + parseNum(d.QUANTITY), 0);
+  // 计算总替代金额，用于金额占比
   const totalSubCash = allData.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
   const rows = allData.map(row => {
-    const qtyPct = totalQty > 0 ? (parseNum(row.QUANTITY) / totalQty * 100).toFixed(2) + "%" : "0.00%";
     const subCashPct = totalSubCash > 0 ? (parseNum(row.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100).toFixed(2) + "%" : "0.00%";
     return fields.map(f => {
-      if (f === "_QTY_PCT") return esc(qtyPct);
       if (f === "_SUB_CASH_PCT") return esc(subCashPct);
       return esc(row[f]);
     }).join(",");
