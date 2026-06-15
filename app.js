@@ -73,6 +73,7 @@ function renderTable(data, sortKey_, sortAsc_) {
   sortAsc = sortAsc_ !== undefined ? sortAsc_ : sortAsc;
 
   const totalQty = data.reduce((s, d) => s + parseNum(d.QUANTITY), 0);
+  const totalSubCash = data.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
   const sorted = [...data].sort((a, b) => {
     let va = a[sortKey], vb = b[sortKey];
@@ -90,16 +91,16 @@ function renderTable(data, sortKey_, sortAsc_) {
   tbody.innerHTML = sorted.map(item => {
     const mktClass = item._MARKET_CN === "上交所" ? "sse"
       : item._MARKET_CN === "深交所" ? "szse" : "oversea";
-    const pct = totalQty > 0 ? (parseNum(item.QUANTITY) / totalQty * 100) : 0;
+    const qtyPct = totalQty > 0 ? (parseNum(item.QUANTITY) / totalQty * 100) : 0;
+    const subCashPct = totalSubCash > 0 ? (parseNum(item.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100) : 0;
     return `<tr>
       <td>${escapeHtml(item.INSTRUMENT_ID)}</td>
       <td><strong>${escapeHtml(item.INSTRUMENT_NAME)}</strong></td>
       <td class="num">${fmtNum(item.QUANTITY)}</td>
-      <td class="num">${pct.toFixed(2)}%</td>
+      <td class="num">${qtyPct.toFixed(2)}%</td>
       <td class="num">${fmtMoney(item.SUBSTITUTION_CASH_AMOUNT)}</td>
+      <td class="num">${subCashPct.toFixed(2)}%</td>
       <td><span class="market-tag ${mktClass}">${escapeHtml(item._MARKET_CN)}</span></td>
-      <td>${escapeHtml(item.CREATION_PREMIUM_RATE || "-")}</td>
-      <td>${escapeHtml(item.REDEMPTION_DISCOUNT_RATE || "-")}</td>
     </tr>`;
   }).join("");
 
@@ -220,11 +221,10 @@ function exportData() {
   const fetchedAt = pkg.fetchedAt || "";
 
   // 列头
-  const headers = ["代码", "名称", "数量", "占比", "替代金额(元)", "市场", "替代标志", "申购溢价", "赎回折价"];
+  const headers = ["代码", "名称", "数量", "数量占比", "替代金额(元)", "金额占比", "市场", "替代标志"];
   // 字段映射
-  const fields = ["INSTRUMENT_ID", "INSTRUMENT_NAME", "QUANTITY", "_PCT",
-                   "SUBSTITUTION_CASH_AMOUNT", "_MARKET_CN", "_FLAG_CN",
-                   "CREATION_PREMIUM_RATE", "REDEMPTION_DISCOUNT_RATE"];
+  const fields = ["INSTRUMENT_ID", "INSTRUMENT_NAME", "QUANTITY", "_QTY_PCT",
+                   "SUBSTITUTION_CASH_AMOUNT", "_SUB_CASH_PCT", "_MARKET_CN", "_FLAG_CN"];
 
   const esc = v => {
     const s = (v || "").toString().trim();
@@ -238,13 +238,16 @@ function exportData() {
     ""
   ];
 
-  // 计算总数量，用于占比
+  // 计算总数量和总替代金额，用于占比
   const totalQty = allData.reduce((s, d) => s + parseNum(d.QUANTITY), 0);
+  const totalSubCash = allData.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
   const rows = allData.map(row => {
-    const pct = totalQty > 0 ? (parseNum(row.QUANTITY) / totalQty * 100).toFixed(2) + "%" : "0.00%";
+    const qtyPct = totalQty > 0 ? (parseNum(row.QUANTITY) / totalQty * 100).toFixed(2) + "%" : "0.00%";
+    const subCashPct = totalSubCash > 0 ? (parseNum(row.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100).toFixed(2) + "%" : "0.00%";
     return fields.map(f => {
-      if (f === "_PCT") return esc(pct);
+      if (f === "_QTY_PCT") return esc(qtyPct);
+      if (f === "_SUB_CASH_PCT") return esc(subCashPct);
       return esc(row[f]);
     }).join(",");
   });
@@ -257,7 +260,8 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${fundCode}_${fetchedAt || "data"}.csv`;
+  const today = new Date().toISOString().slice(0, 10);
+  a.download = `${fundCode}_${today}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
