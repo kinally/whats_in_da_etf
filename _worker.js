@@ -23,14 +23,11 @@ async function handleQuery(url) {
     return jsonResponse({ ok: false, error: '缺少 code 参数' }, 400);
   }
 
-  // 根据代码前缀判断市场
+  // 暂仅支持上交所 5 开头 ETF
   if (/^5\d{5}$/.test(fundCode)) {
     return querySSE(fundCode);
   }
-  if (/^1[5-6]\d{4}$/.test(fundCode)) {
-    return querySZSE(fundCode);
-  }
-  return jsonResponse({ ok: false, error: `不支持的基金代码格式: ${fundCode}` }, 400);
+  return jsonResponse({ ok: false, error: `暂仅支持上交所 5 开头的 ETF，不支持 ${fundCode}` }, 400);
 }
 
 /* ========== 上交所 (5xxxxx) ========== */
@@ -75,138 +72,6 @@ async function querySSE(fundCode) {
   } catch (err) {
     return jsonResponse({ ok: false, error: err.message }, 502);
   }
-}
-
-/* ========== 深交所 (15xxxx / 16xxxx) ========== */
-async function querySZSE(fundCode) {
-  const today = new Date();
-  // 调整为北京时间
-  const cn = new Date(today.getTime() + 8 * 60 * 60 * 1000);
-  const ymd = cn.toISOString().slice(0, 10).replace(/-/g, '');
-  const url = `https://reportdocs.static.szse.cn/files/text/etf/ETF${fundCode}${ymd}.txt`;
-
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        Referer: 'https://www.szse.cn/',
-      },
-    });
-    if (!resp.ok) {
-      return jsonResponse({ ok: false, error: `深交所暂无 ${fundCode} 今日数据文件 (HTTP ${resp.status})` }, 502);
-    }
-
-    // 获取原始字节，尝试 GBK 解码（深交所文件为 GBK 编码）
-    let text;
-    try {
-      const buf = await resp.arrayBuffer();
-      text = new TextDecoder('gbk').decode(buf);
-    } catch (_) {
-      // TextDecoder 不支持 gbk 时，回退到默认 UTF-8
-      const buf = await resp.arrayBuffer();
-      text = new TextDecoder('utf-8').decode(buf);
-    }
-
-    const rows = parseSZSEText(text, fundCode);
-
-    return jsonResponse({
-      ok: true,
-      etfName: rows._etfName || '',
-      rows: rows._components || [],
-      count: (rows._components || []).length,
-    });
-  } catch (err) {
-    return jsonResponse({ ok: false, error: `深交所查询失败: ${err.message}` }, 502);
-  }
-}
-
-/* ========== 解析深交所 TSV 文本 ========== */
-function parseSZSEText(text, fundCode) {
-  const lines = text.split(/\r?\n/);
-  let etfName = '';
-
-  // 第 1 行找基金名称（可能被空格包围）
-  if (lines[0]) {
-    const match = lines[0].match(/([^\s]+ETF)/);
-    if (match) etfName = match[1];
-  }
-
-  // 找表头行和表格数据
-  let headerIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes('证券代码') && lines[i].includes('证券名称')) {
-      headerIdx = i;
-      break;
-    }
-  }
-  if (headerIdx === -1) return { _etfName: etfName, _components: [] };
-
-  // 解析表头列
-  const cols = lines[headerIdx].split(/\t/).map(c => c.trim());
-
-  const colMap = {};
-  cols.forEach((c, idx) => {
-    if (c.includes('证券代码')) colMap.code = idx;
-    if (c.includes('证券名称')) colMap.name = idx;
-    if (c.includes('股份数量')) colMap.qty = idx;
-    if (c.includes('现金替代标志')) colMap.flag = idx;
-    if (c.includes('申购现金替代保证金')) colMap.createRate = idx;
-    if (c.includes('赎回现金替代保证金')) colMap.redeemRate = idx;
-    if (c.includes('申购溢价')) colMap.premium = idx;
-    if (c.includes('赎回折价')) colMap.discount = idx;
-    if (c.includes('买卖市场')) colMap.market = idx;
-  });
-
-  const MARKET_MAP = { '深圳市场': '深交所', '上海市场': '上交所', '北京市场': '北交所' };
-  const FLAG_MAP = { '允许': '允许现金替代', '必须': '必须现金替代', '禁止': '不允许替代' };
-
-  const components = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line || line.startsWith('--') || line.startsWith('免责') || line.startsWith('注')) continue;
-
-    const parts = line.split(/\t/).map(p => p.trim());
-    if (parts.length < 3) continue;
-
-    const code = parts[colMap.code] || '';
-    const name = parts[colMap.name] || '';
-    if (!code || !name) continue;
-
-    // 现金替代标志映射
-    const rawFlag = parts[colMap.flag] || '';
-    let flag = rawFlag;
-    let flagCn = '';
-    for (const [k, v] of Object.entries(FLAG_MAP)) {
-      if (rawFlag.includes(k)) { flagCn = v; break; }
-    }
-
-    // 买卖市场映射
-    const rawMarket = parts[colMap.market] || '';
-    let marketCn = '';
-    for (const [k, v] of Object.entries(MARKET_MAP)) {
-      if (rawMarket.includes(k)) { marketCn = v; break; }
-    }
-    if (!marketCn) {
-      // 根据代码前缀推断市场
-      if (/^6/.test(code) || /^5/.test(code)) marketCn = '上交所';
-      else if (/^0/.test(code) || /^3/.test(code) || /^2/.test(code)) marketCn = '深交所';
-      else marketCn = '其他';
-    }
-
-    components.push({
-      INSTRUMENT_ID: code,
-      INSTRUMENT_NAME: name,
-      QUANTITY: parts[colMap.qty] || '0',
-      SUBSTITUTION_CASH_AMOUNT: '',  // 深交所不提供替代金额
-      SUBSTITUTION_FLAG: rawFlag,
-      _MARKET_CN: marketCn,
-      _FLAG_CN: flagCn,
-      CREATION_PREMIUM_RATE: colMap.premium !== undefined ? (parts[colMap.premium] || '') : '',
-      REDEMPTION_DISCOUNT_RATE: colMap.discount !== undefined ? (parts[colMap.discount] || '') : '',
-    });
-  }
-
-  return { _etfName: etfName, _components: components };
 }
 
 /* ========== JSON 响应工具 ========== */
