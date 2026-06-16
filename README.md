@@ -16,6 +16,35 @@
  └──────┘                 └──────────────────────────────┘
 ```
 
+## 🔀 数据源分流策略
+
+| 用途 | 主方案 (P0) | 备选 (P1) | 原因 |
+|------|------------|----------|------|
+| ETF 名称 | `yunhq snap[11]` (cpxxextendname) | 东财 `searchadapter.suggest` | snap 0开销,随行情一起返回 |
+| ETF 行情(最新价/涨跌幅/IOPV) | `yunhq snap[1]/[2]/[12]` | — | 上交所官方实时行情,一日一次IOPV |
+| 成分股昨收价(替代金额补算) | `yunhq snap[5]` (prev_close) | 东财 K-line `push2his.eastmoney.com` | snap日期与TRADING_DAY对齐时prev_close即为T-1收盘价 ✓ |
+| 日期不对齐降级 | 检查 `yunhq res.date == TRADING_DAY` | 东财 K-line `end=PRE_TRADING_DAY` | 跨日/交易时段切换等边界场景 |
+
+### 分流流程图
+
+```
+computeMissingPrices(needPrice, listDate, preTradingDay)
+  │
+  ├─ 主: 并发 fetchSnapQuote(每只成分股)
+  │    ├─ res.date == TRADING_DAY? → prev_close作为T-1收盘价 ✅
+  │    └─ 否 → 标记待降级
+  │
+  └─ 备: 东财 K-line (仅对标记降级的股票)
+       └─ end=PRE_TRADING_DAY → 精确获取T-1收盘价
+```
+
+### 为什么这么设计
+
+1. **yunhq snap 是上交所官方行情接口**，返回的是实时 snap 数据，包含 prev_close（昨收价）
+2. 当 `snap.date === TRADING_DAY` 时，prev_close 正好等于 **T-1 收盘价**（PCF 所需）
+3. 边界场景（如跨日查询、数据切换窗口期）日期对不齐时，降级到**东财 K-line 带日期参数**的精确查询
+4. 东财 suggest / K-line 作为备选挂起，正常情况下不会被调用，节省子请求额度
+
 ## ✅ 已实现功能
 
 | 功能 | 说明 |

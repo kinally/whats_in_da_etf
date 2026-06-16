@@ -76,6 +76,11 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
 }
+.price-date {
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+}
 .chg-up { color: #f87171; font-weight: 600; }
 .chg-down { color: #4ade80; font-weight: 600; }
 

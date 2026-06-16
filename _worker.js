@@ -61,6 +61,7 @@ async function querySSE(fundCode) {
     if (etfSnap) {
       etfName = etfSnap.fundName || '';
       etfPrice = {
+        snapDate: etfSnap.date,  // yunhq 自带的日期 YYYYMMDD
         last: etfSnap.last,
         prevClose: etfSnap.prevClose,
         iopv: etfSnap.iopv,

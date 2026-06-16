@@ -42,17 +42,21 @@ function renderHeader(pkg) {
     const p = pkg.etfPrice;
     const chgCls = p.chgRate >= 0 ? 'chg-up' : 'chg-down';
     const chgSign = p.chgRate >= 0 ? '+' : '';
+    // 用 yunhq snap 的日期作为数据主日期
+    const snapDate = p.snapDate ? String(p.snapDate) : '';
+    const dataDate = snapDate.length === 8
+      ? `${snapDate.slice(0,4)}-${snapDate.slice(4,6)}-${snapDate.slice(6,8)}` : '';
     priceEl.innerHTML =
       `<span class="price-last">${p.last.toFixed(3)}</span>` +
       `<span class="${chgCls}">${chgSign}${p.chgRate.toFixed(2)}%</span>` +
+      (dataDate ? ` <span class="price-date">${dataDate}</span>` : '') +
       `<span class="price-iopv">IOPV ${p.iopv.toFixed(4)}</span>`;
     priceEl.style.display = "";
   } else {
     priceEl.style.display = "none";
   }
-  // 查询日期 + 清单交易日
-  const dateHtml = "📅 " + escapeHtml(pkg.fetchedAt)
-    + (pkg.listDate ? ' <span class="list-date">📋 ' + escapeHtml(pkg.listDate) + ' 申赎清单</span>' : '');
+  // 清单交易日（来自 sgInfo）
+  const dateHtml = (pkg.listDate ? '📋 ' + escapeHtml(pkg.listDate) + ' 申赎清单' : '📅 --');
   document.getElementById("fetchDate").innerHTML = dateHtml;
 }
 
@@ -250,7 +254,7 @@ function exportData() {
   const pkg = fullPackage || {};
   const fundCode = pkg.fundCode || "ETF";
   const etfName = pkg.etfName || "";
-  const fetchedAt = pkg.fetchedAt || "";
+  const dataDate = pkg.listDate || pkg.etfPrice?.snapDate?.slice(0,10) || pkg.fetchedAt || "";
 
   // 列头
   const headers = ["代码", "名称", "数量", "替代金额(元)", "金额占比", "市场", "替代标志"];
@@ -265,7 +269,7 @@ function exportData() {
 
   // 元数据头（加 # 号可被Excel/Sheets忽略）
   const meta = [
-    `# ETF: ${fundCode} ${etfName}  |  ${fetchedAt}`,
+    `# ETF: ${fundCode} ${etfName}  |  ${dataDate}`,
     `# 成分股数: ${allData.length}`,
     ""
   ];
