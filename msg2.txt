@@ -1,3 +1,0 @@
-docs: add data source fallback strategy diagram to README
-
-Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>
