@@ -61,6 +61,7 @@ computeMissingPrices(needPrice, listDate, preTradingDay)
 | ⭐ 补算标记 | 补算的替代金额在表格中用黄色底纹 + ★ 标记，统计卡显示"补算"计数 |
 | 📊 ETF 价格参考 | Header 显示最新价 / 涨跌幅 / IOPV 净值（来自 yunhq snap） |
 | 🧠 日期对齐检查 | yunhq snap 日期与 TRADING_DAY 对齐则用 snap，不对齐降级东财 K-line |
+| 📆 数据日期源自 API | 日期不再用浏览器本地时间，改用 yunhq snap 自带 `res.date` + sgInfo `TRADING_DAY`，与股价严格对应 |
 
 ## 📁 文件结构
 
