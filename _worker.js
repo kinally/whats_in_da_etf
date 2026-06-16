@@ -47,8 +47,6 @@ async function querySSE(fundCode) {
   // 从 sgInfo 获取交易日信息（可选）
   const listDate = sgResult.status === 'fulfilled' && sgResult.value?.tradingDay
     ? sgResult.value.tradingDay : null;
-  const preTradingDay = sgResult.status === 'fulfilled' && sgResult.value?.preTradingDay
-    ? sgResult.value.preTradingDay : null;
 
   // ── 主方案：SSE yunhq snap ──
   // 同时拿 ETF 自身行情（名称/价格参考）和成分股的昨收价
@@ -87,7 +85,7 @@ async function querySSE(fundCode) {
     });
 
     if (needPrice.length > 0) {
-      const priceMap = await computeMissingPrices(needPrice, listDate, preTradingDay);
+      const priceMap = await computeMissingPrices(needPrice, listDate);
 
       enriched.forEach(r => {
         const qty = parseInt(r.QUANTITY, 10);
@@ -113,7 +111,7 @@ async function querySSE(fundCode) {
 }
 
 /* ---------- 补算缺失价格：主方案 yunhq snap, 备选东财 K-line ---------- */
-async function computeMissingPrices(needPrice, listDate, preTradingDay) {
+async function computeMissingPrices(needPrice, listDate) {
   const priceMap = {};
 
   // 将 listDate "YYYY-MM-DD" 转 "YYYYMMDD" 用于对比
@@ -135,18 +133,29 @@ async function computeMissingPrices(needPrice, listDate, preTradingDay) {
     }
     const { id, snap } = pr.value;
     const snapDate = snap.date ? String(snap.date) : '';
-    // 日期对齐检查：yunhq 的日期 == listDate → prev_close 正确
-    if (snapDate === listDateCompact && snap.prevClose != null) {
-      priceMap[id] = snap.prevClose;
+
+    // 日期对齐判断：snap.date == TRADING_DAY ?
+    if (snapDate === listDateCompact) {
+      // ✅ 清单是今天的 + 市场已收盘 → 最新价 = 今日收盘价
+      if (snap.last != null) {
+        priceMap[id] = snap.last;
+      } else {
+        emNeed.push(id);
+      }
     } else {
-      emNeed.push(id);
+      // ❌ 清单是历史数据 → 用昨收价
+      if (snap.prevClose != null) {
+        priceMap[id] = snap.prevClose;
+      } else {
+        emNeed.push(id);
+      }
     }
   });
 
-  // 备选方案：日期没对齐的用东财 K-line（取 PRE_TRADING_DAY 的收盘价）
+  // 备选方案：日期没对齐或 snap 取不到价格的用东财 K-line
   if (emNeed.length > 0) {
-    // 优先用 preTradingDay（T-1），如果没有就用 listDate
-    const targetDate = preTradingDay || listDate;
+    // 用 TRADING_DAY 作为目标日期（东财 K-line 带日期参数，精确返回当日收盘价）
+    const targetDate = listDate; // 不再用 preTradingDay
     if (targetDate) {
       const emPromises = emNeed.map(id =>
         fetchClosingPriceFromEastMoney(id, targetDate)
