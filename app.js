@@ -36,8 +36,24 @@ function renderHeader(pkg) {
     nameEl.textContent = "";
     nameEl.style.display = "none";
   }
-  // 日期
-  document.getElementById("fetchDate").innerHTML = "📅 " + escapeHtml(pkg.fetchedAt);
+  // ETF 价格参考（最新价/涨跌幅/IOPV）
+  const priceEl = document.getElementById("etfPriceInfo");
+  if (pkg.etfPrice && pkg.etfPrice.last != null) {
+    const p = pkg.etfPrice;
+    const chgCls = p.chgRate >= 0 ? 'chg-up' : 'chg-down';
+    const chgSign = p.chgRate >= 0 ? '+' : '';
+    priceEl.innerHTML =
+      `<span class="price-last">${p.last.toFixed(3)}</span>` +
+      `<span class="${chgCls}">${chgSign}${p.chgRate.toFixed(2)}%</span>` +
+      `<span class="price-iopv">IOPV ${p.iopv.toFixed(4)}</span>`;
+    priceEl.style.display = "";
+  } else {
+    priceEl.style.display = "none";
+  }
+  // 查询日期 + 清单交易日
+  const dateHtml = "📅 " + escapeHtml(pkg.fetchedAt)
+    + (pkg.listDate ? ' <span class="list-date">📋 ' + escapeHtml(pkg.listDate) + ' 申赎清单</span>' : '');
+  document.getElementById("fetchDate").innerHTML = dateHtml;
 }
 
 /* ---------- Stats ---------- */
@@ -45,11 +61,13 @@ function renderStats(data) {
   const sse = data.filter(d => d._MARKET_CN === "上交所").length;
   const szse = data.filter(d => d._MARKET_CN === "深交所").length;
   const oversea = data.filter(d => d._MARKET_CN === "境外").length;
+  const computed = data.filter(d => d._AMOUNT_SOURCE === "calc").length;
 
   document.getElementById("statTotal").textContent = data.length;
   document.getElementById("statSse").textContent = sse;
   document.getElementById("statSzse").textContent = szse;
   document.getElementById("statOversea").textContent = oversea;
+  document.getElementById("statComputed").textContent = computed;
 }
 
 /* ---------- Top 5 Holdings ---------- */
@@ -101,11 +119,14 @@ function renderTable(data, sortKey_, sortAsc_) {
     const mktClass = item._MARKET_CN === "上交所" ? "sse"
       : item._MARKET_CN === "深交所" ? "szse" : "oversea";
     const subCashPct = totalSubCash > 0 ? (parseNum(item.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100) : 0;
-    return `<tr>
-      <td>${escapeHtml(item.INSTRUMENT_ID)}</td>
+    const isCalc = item._AMOUNT_SOURCE === "calc";
+    const amtClass = isCalc ? 'num amt-calc' : 'num amt-api';
+    const calcStar = isCalc ? ' ★' : '';
+    return `<tr${isCalc ? ' class="row-calc"' : ''}>
+      <td>${escapeHtml(item.INSTRUMENT_ID)}${calcStar}</td>
       <td><strong>${escapeHtml(item.INSTRUMENT_NAME)}</strong></td>
       <td class="num">${fmtNum(item.QUANTITY)}</td>
-      <td class="num">${fmtMoney(item.SUBSTITUTION_CASH_AMOUNT)}</td>
+      <td class="${amtClass}">${fmtMoney(item.SUBSTITUTION_CASH_AMOUNT)}</td>
       <td class="num">${subCashPct.toFixed(2)}%</td>
       <td><span class="market-tag ${mktClass}">${escapeHtml(item._MARKET_CN)}</span></td>
     </tr>`;
@@ -194,6 +215,8 @@ async function reloadLatest() {
     fullPackage = {
       fundCode: code,
       etfName: data.etfName || "",
+      listDate: data.listDate || "",
+      etfPrice: data.etfPrice || null,
       fetchedAt: new Date().toISOString().slice(0, 10),
       components: rows
     };
@@ -290,8 +313,10 @@ function fmtNum(v) {
 function fmtMoney(v) {
   if (!v) return "-";
   const s = v.toString().trim();
-  if (!s) return "-";
-  return parseFloat(s).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!s || s === '-') return "-";
+  const n = parseFloat(s);
+  if (isNaN(n)) return "-";
+  return n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function escapeHtml(s) {

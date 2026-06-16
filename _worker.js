@@ -32,30 +32,139 @@ async function handleQuery(url) {
 
 /* ========== 上交所 (5xxxxx) ========== */
 async function querySSE(fundCode) {
-  // 并行请求：成分股 + ETF 名称/行情
-  const [compResult, quoteResult] = await Promise.allSettled([
+  // 并行请求：成分股 + 申购清单基本信息
+  const [compResult, sgResult] = await Promise.allSettled([
     fetchComponents(fundCode),
-    fetchQuote(fundCode),
+    fetchSgInfo(fundCode),
   ]);
 
   // 成分股数据是必须的
   if (compResult.status === 'rejected') {
     return jsonResponse({ ok: false, error: compResult.reason.message }, 502);
   }
-  const { rows, enriched } = compResult.value;
+  const { rows, enriched, computedCount } = compResult.value;
 
-  // 名称数据（可选，失败不影响成分股展示）
+  // 从 sgInfo 获取交易日信息（可选）
+  const listDate = sgResult.status === 'fulfilled' && sgResult.value?.tradingDay
+    ? sgResult.value.tradingDay : null;
+  const preTradingDay = sgResult.status === 'fulfilled' && sgResult.value?.preTradingDay
+    ? sgResult.value.preTradingDay : null;
+
+  // ── 主方案：SSE yunhq snap ──
+  // 同时拿 ETF 自身行情（名称/价格参考）和成分股的昨收价
+  let etfSnap = null;
   let etfName = '';
-  if (quoteResult.status === 'fulfilled' && quoteResult.value) {
-    etfName = quoteResult.value.name || '';
+  let etfPrice = null;
+
+  try {
+    etfSnap = await fetchSnapQuote(fundCode);
+    if (etfSnap) {
+      etfName = etfSnap.fundName || '';
+      etfPrice = {
+        last: etfSnap.last,
+        prevClose: etfSnap.prevClose,
+        iopv: etfSnap.iopv,
+        chgRate: etfSnap.chgRate,
+        open: etfSnap.open,
+      };
+    }
+  } catch (_) { /* snap 非必须，失败不阻塞 */ }
+
+  // 如果 snap 没拿到名称，降级到东财 suggest
+  if (!etfName) {
+    try {
+      const q = await fetchQuote(fundCode);
+      etfName = q.name || '';
+    } catch (_) {}
+  }
+
+  // ── 补算缺失的替代金额 ──
+  if (computedCount > 0) {
+    const needPrice = enriched.filter(r => {
+      const qty = parseInt(r.QUANTITY, 10);
+      return qty > 0 && (!r.SUBSTITUTION_CASH_AMOUNT || r.SUBSTITUTION_CASH_AMOUNT === '-' || r.SUBSTITUTION_CASH_AMOUNT === '');
+    });
+
+    if (needPrice.length > 0) {
+      const priceMap = await computeMissingPrices(needPrice, listDate, preTradingDay);
+
+      enriched.forEach(r => {
+        const qty = parseInt(r.QUANTITY, 10);
+        if (qty > 0 && (!r.SUBSTITUTION_CASH_AMOUNT || r.SUBSTITUTION_CASH_AMOUNT === '-' || r.SUBSTITUTION_CASH_AMOUNT === '')) {
+          const price = priceMap[r.INSTRUMENT_ID];
+          if (price != null) {
+            r.SUBSTITUTION_CASH_AMOUNT = (price * qty).toFixed(2);
+            r._AMOUNT_SOURCE = priceMap._source === 'eastmoney' ? 'calc_em' : 'calc';
+          }
+        }
+      });
+    }
   }
 
   return jsonResponse({
     ok: true,
     etfName,
+    listDate,
+    etfPrice,      // 新增：ETF 价格参考
     rows: enriched,
     count: enriched.length,
   });
+}
+
+/* ---------- 补算缺失价格：主方案 yunhq snap, 备选东财 K-line ---------- */
+async function computeMissingPrices(needPrice, listDate, preTradingDay) {
+  const priceMap = {};
+
+  // 将 listDate "YYYY-MM-DD" 转 "YYYYMMDD" 用于对比
+  const listDateCompact = listDate ? listDate.replace(/-/g, '') : '';
+
+  // 主方案：并发查 yunhq snap
+  const snapPromises = needPrice.map(r =>
+    fetchSnapQuote(r.INSTRUMENT_ID)
+      .then(snap => snap ? { id: r.INSTRUMENT_ID, snap } : { id: r.INSTRUMENT_ID, snap: null })
+  );
+  const snapResults = await Promise.allSettled(snapPromises);
+
+  const emNeed = []; // 需要降级到东财的股票
+
+  snapResults.forEach(pr => {
+    if (pr.status !== 'fulfilled' || !pr.value.snap) {
+      emNeed.push(pr.value?.id);
+      return;
+    }
+    const { id, snap } = pr.value;
+    const snapDate = snap.date ? String(snap.date) : '';
+    // 日期对齐检查：yunhq 的日期 == listDate → prev_close 正确
+    if (snapDate === listDateCompact && snap.prevClose != null) {
+      priceMap[id] = snap.prevClose;
+    } else {
+      emNeed.push(id);
+    }
+  });
+
+  // 备选方案：日期没对齐的用东财 K-line（取 PRE_TRADING_DAY 的收盘价）
+  if (emNeed.length > 0) {
+    // 优先用 preTradingDay（T-1），如果没有就用 listDate
+    const targetDate = preTradingDay || listDate;
+    if (targetDate) {
+      const emPromises = emNeed.map(id =>
+        fetchClosingPriceFromEastMoney(id, targetDate)
+          .then(price => ({ id, price }))
+          .catch(() => ({ id, price: null }))
+      );
+      const emResults = await Promise.allSettled(emPromises);
+      let emCount = 0;
+      emResults.forEach(pr => {
+        if (pr.status === 'fulfilled' && pr.value.price != null) {
+          priceMap[pr.value.id] = pr.value.price;
+          emCount++;
+        }
+      });
+      if (emCount > 0) priceMap._source = 'eastmoney';
+    }
+  }
+
+  return priceMap;
 }
 
 /* ---------- 拉取上交所成分股数据 ---------- */
@@ -83,17 +192,121 @@ async function fetchComponents(fundCode) {
 
   const MARKET_MAP = { '101': '上交所', '102': '深交所', '9999': '境外' };
   const FLAG_MAP = { '0': '不允许替代', '1': '允许现金替代', '2': '必须现金替代' };
-  const enriched = rows.map(r => ({
-    INSTRUMENT_ID: r.INSTRUMENT_ID,
-    INSTRUMENT_NAME: r.INSTRUMENT_NAME,
-    QUANTITY: r.QUANTITY,
-    SUBSTITUTION_CASH_AMOUNT: (r.SUBSTITUTION_CASH_AMOUNT || '').trim(),
-    SUBSTITUTION_FLAG: r.SUBSTITUTION_FLAG || '',
-    _MARKET_CN: MARKET_MAP[r.UNDERLYION_SECURITY_ID] || '其他',
-    _FLAG_CN: FLAG_MAP[r.SUBSTITUTION_FLAG] || r.SUBSTITUTION_FLAG || '',
-  }));
+  let computedCount = 0;
+  const enriched = rows.map(r => {
+    const rawAmt = (r.SUBSTITUTION_CASH_AMOUNT || '').trim();
+    const qty = parseInt(r.QUANTITY, 10);
+    const isMissing = qty > 0 && (!rawAmt || rawAmt === '-');
+    if (isMissing) computedCount++;
+    return {
+      INSTRUMENT_ID: r.INSTRUMENT_ID,
+      INSTRUMENT_NAME: r.INSTRUMENT_NAME,
+      QUANTITY: r.QUANTITY,
+      SUBSTITUTION_CASH_AMOUNT: rawAmt,
+      SUBSTITUTION_FLAG: r.SUBSTITUTION_FLAG || '',
+      _MARKET_CN: MARKET_MAP[r.UNDERLYION_SECURITY_ID] || '其他',
+      _FLAG_CN: FLAG_MAP[r.SUBSTITUTION_FLAG] || r.SUBSTITUTION_FLAG || '',
+      _AMOUNT_SOURCE: isMissing ? 'missing' : 'api',
+    };
+  });
 
-  return { rows, enriched };
+  return { rows, enriched, computedCount };
+}
+
+/* ---------- 拉取申购赎回清单基本信息（含交易日） ---------- */
+async function fetchSgInfo(fundCode) {
+  const params = new URLSearchParams({
+    sqlId: 'COMMON_SSE_CP_JJLB_ETFJJGK_GGSGSHQD_JBXX_C',
+    FUNDID2: fundCode,
+    jsonCallBack: 'cb',
+    isPagination: 'false',
+    'pageHelp.pageSize': '500',
+  });
+  const resp = await fetch(`https://query.sse.com.cn/commonQuery.do?${params}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      Referer: 'https://etf.sse.com.cn/',
+    },
+  });
+  const text = await resp.text();
+  let jsonStr = text;
+  if (text.startsWith('cb(') && text.endsWith(')')) {
+    jsonStr = text.slice(3, -1);
+  }
+  const data = JSON.parse(jsonStr);
+  const result = data.result || [];
+  if (!result.length) return {};
+
+  // TRADING_DAY 是 YYYYMMDD 格式，转成 YYYY-MM-DD
+  const rawDay = result[0].TRADING_DAY || '';
+  const preDay = result[0].PRE_TRADING_DAY || '';
+  const tradingDay = rawDay.length === 8
+    ? `${rawDay.slice(0,4)}-${rawDay.slice(4,6)}-${rawDay.slice(6,8)}` : '';
+  const preTradingDay = preDay.length === 8
+    ? `${preDay.slice(0,4)}-${preDay.slice(4,6)}-${preDay.slice(6,8)}` : '';
+
+  return { tradingDay, preTradingDay };
+}
+
+/* ---------- SSE yunhq snap 行情接口（主方案） ---------- */
+// 可用于查询 ETF 自身行情或任何上交所个股的 snap 数据
+async function fetchSnapQuote(code) {
+  const select =
+    'name,last,chg_rate,change,open,prev_close,high,low,volume,amount,tradephase,cpxxextendname,iopv';
+  // HTTPS 优先，降级到 HTTP
+  const urls = [
+    `https://yunhq.sse.com.cn:32042/v1/sh1/snap/${code}?select=${select}`,
+    `http://yunhq.sse.com.cn:32041/v1/sh1/snap/${code}?select=${select}`,
+  ];
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const s = data?.snap;
+      if (!s || s.length < 13) continue;
+      return {
+        date: data.date,           // YYYYMMDD
+        last: parseFloat(s[1]),    // 最新价
+        chgRate: parseFloat(s[2]), // 涨跌幅
+        change: parseFloat(s[3]),  // 涨跌额
+        open: parseFloat(s[4]),    // 开盘价
+        prevClose: parseFloat(s[5]), // 昨收价 ← 替代金额补算用
+        high: parseFloat(s[6]),    // 最高
+        low: parseFloat(s[7]),     // 最低
+        volume: parseInt(s[8], 10),
+        amount: parseFloat(s[9]),
+        fundName: s[11] || '',    // 基金全称（用于 ETF 名称）
+        iopv: parseFloat(s[12]),  // IOPV 净值（仅 ETF 有）
+      };
+    } catch (_) { /* 尝试下一个 URL */ }
+  }
+  return null;
+}
+
+/* ---------- 东财 K-line 历史收盘价（备选方案） ---------- */
+async function fetchClosingPriceFromEastMoney(stockCode, dateStr) {
+  // 6xxxxx/688xxx → 上交所 market=1；其余 → 深交所 market=0
+  const market = stockCode.startsWith('6') ? 1 : 0;
+  const dateCompact = dateStr.replace(/-/g, '');
+  const url =
+    `https://push2his.eastmoney.com/api/qt/stock/kline/get` +
+    `?secid=${market}.${stockCode}` +
+    `&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` +
+    `&klt=101&fqt=1&end=${dateCompact}&lmt=1`;
+  try {
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const klines = data?.data?.klines;
+    if (!klines?.length) return null;
+    const parts = klines[0].split(',');
+    // kline: 日期,开盘价,收盘价,最高价,最低价,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
+    if (parts[0] === dateStr) return parseFloat(parts[2]);
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /* ---------- 拉取 ETF 名称 ---------- */
