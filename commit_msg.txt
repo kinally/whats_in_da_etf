@@ -1,0 +1,3 @@
+fix: 重写asyncPool并发池修复变量引用时序Bug + fetchDate渲染回归
+
+Co-Authored-By: AtomCode (deepseek-v4-flash) <noreply@atomgit.com>

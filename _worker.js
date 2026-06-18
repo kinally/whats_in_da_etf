@@ -131,19 +131,16 @@ async function querySSE(fundCode) {
 
 /* ---------- 并发池：限制同时运行的 Promise 数量 ---------- */
 async function asyncPool(items, concurrency, fn) {
+  let i = 0;
   const results = [];
-  const executing = [];
-  for (const item of items) {
-    const p = Promise.resolve().then(() => fn(item));
-    results.push(p);
-    if (concurrency <= items.length) {
-      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-      executing.push(e);
-      if (executing.length >= concurrency) {
-        await Promise.race(executing);
-      }
+  const runNext = async () => {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = fn(items[idx]).catch(e => { throw e; });
     }
-  }
+  };
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, () => runNext());
+  await Promise.allSettled(runners);
   return Promise.allSettled(results);
 }
 
