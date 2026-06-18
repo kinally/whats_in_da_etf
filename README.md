@@ -22,7 +22,7 @@
 |------|------------|----------|------|
 | ETF 名称 | `yunhq snap[11]` (cpxxextendname) | 东财 `searchadapter.suggest` | snap 0开销,随行情一起返回 |
 | ETF 行情(最新价/涨跌幅/IOPV) | `yunhq snap[1]/[2]/[12]` | — | 上交所官方实时行情 |
-| 成分股替代金额补算 | `yunhq snap[1]`(最新价=今日收盘价) | 东财 K-line `end=TRADING_DAY` | snap.date==TRADING_DAY时,市场已收盘,最新价=今日收盘价 ✅ |
+| 成分股替代金额补算 | `yunhq snap[5]` (prev_close=昨收价=T-1) | 东财 K-line `end=TRADING_DAY` | SSE 8:30更新前一日收盘数据,替代金额以T-1收盘价为基准 |
 | 清单是历史数据时 | `yunhq snap[5]` (prev_close=昨收价) | 东财 K-line `end=TRADING_DAY` | snap.date≠TRADING_DAY时用昨收价 |
 
 ### 分流流程图
@@ -30,13 +30,14 @@
 ```
 computeMissingPrices(needPrice, listDate)
   │
-  对每只成分股并发 fetchSnapQuote()
+  ├─ asyncPool(needPrice, 5)  ← 🚦 最大5个并发，防止API封禁
+  │   对每只成分股并发 fetchSnapQuote()
   │
   ├─ snap.date == TRADING_DAY ?
-  │  ├─ ✅ PCF是今天的,市场已收盘 → snap[1](最新价) = 今日收盘价
-  │  └─ ❌ PCF是历史数据 → snap[5](昨收价) = 最近收盘价
+  │  ├─ ✅ → snap[5](昨收价) = T-1 收盘价
+  │  └─ ❌ → snap[5](昨收价) = 最近收盘价
   │
-  └─ 都失败 → 东财 K-line end=TRADING_DAY 兜底
+  └─ 都失败 → asyncPool(emNeed, 5) 东财 K-line end=TRADING_DAY 兜底
 ```
 
 ### 为什么这么设计
@@ -64,6 +65,10 @@ computeMissingPrices(needPrice, listDate)
 | 📊 ETF 价格参考 | Header 显示最新价 / 涨跌幅 / IOPV 净值（来自 yunhq snap） |
 | 🧠 日期对齐检查 | yunhq snap 日期与 TRADING_DAY 对齐则用 snap，不对齐降级东财 K-line |
 | 📆 数据日期源自 API | 日期不再用浏览器本地时间，改用 yunhq snap 自带 `res.date` + sgInfo `TRADING_DAY`，与股价严格对应 |
+| 🚦 前端+后端代码校验 | 输入框仅接受纯数字 ETF 代码，拒绝文字/混合输入，防止 API 被封禁 |
+| ⚠️ 无清单提示 | 部分基金（如 501201）不提供申购赎回清单，弹窗告知用户 |
+| 🔔 SSE 披露提示 | 页面底部显示 "SSE 披露时间统一调整为交易日上午 8:30" |
+| 👤 作者署名 | Footer 显示 Design & Code by Kinal |
 
 ## 📁 文件结构
 
@@ -115,6 +120,20 @@ sse_etf_monitor_cf/
 - [ ] **历史快照** — 保留不同日期的成分股数据，支持回溯对比
 - [ ] **移动端优化** — 表格在手机上显示稍挤，可进一步适配
 
+### 🔬 PCF 替代金额定价基准
+
+> **验证结论（2026-06-17 确认）：**
+> PCF 替代金额统一使用 **T-1 收盘价**（前一日收盘价）作为定价基准。
+> SSE 每天上午 8:30 更新前一日收盘信息，替代金额应以此为准。
+>
+> **关键修正（2026-06-17）：**
+> - `computeMissingPrices` 中 snap.date == TRADING_DAY 时，**不再使用 snap[1]（最新价）**
+> - 改为统一使用 **snap[5]（昨收价 = T-1 收盘价）**
+> - 当 snap 日期与 TRADING_DAY 不对齐时，同样使用昨收价 `snap[5]`
+> - 兜底方案：东财 K-line `end=TRADING_DAY`
+
+**API 参数备忘：**
+
 ## 🔧 本地开发
 
 ```bash
@@ -138,6 +157,9 @@ A: yunhq snap 或东财 suggest 偶尔限流，不影响成分股数据，再次
 
 **Q: 搜索框输入 ETF 代码后表格空了？**
 A: 正常——搜索框同时用于过滤成分股，输入 6 位代码可能不匹配任何成分股。点刷新即可查询该 ETF。
+
+**Q: 为什么查了501201显示"该基金不提供申购赎回清单"？**
+A: 501201 是 LOF（上市开放式基金）而非 ETF，上交所不为其提供申购赎回清单（PCF）。仅支持 5 开头 ETF 品种。
 
 **Q: 替代金额那栏显示 "-"？**
 A: 6/688 开头的上交所成分股在 API 中不提供替代金额，系统会自动用昨收价 × 数量补算并标记 ★。

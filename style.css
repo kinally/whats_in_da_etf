@@ -353,6 +353,100 @@ th:not(.sorted-asc):not(.sorted-desc) .sort-arrow::after { content: "↕"; opaci
   color: var(--text2);
 }
 
+/* SSE 披露时间提示 */
+.footer-disclosure {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.disclosure-badge {
+  display: inline-block;
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 14px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+}
+
+/* 署名 */
+.footer-credit {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 6px;
+  opacity: 0.6;
+}
+
+/* === NoPCF Modal === */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-box {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 32px 40px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: scaleIn 0.2s ease;
+}
+
+.modal-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 12px 0;
+  color: var(--text);
+}
+
+.modal-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text2);
+  margin: 0 0 20px 0;
+}
+
+.modal-close-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 32px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.modal-close-btn:hover {
+  opacity: 0.85;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* === Empty State === */
 .empty-state {
   text-align: center;

@@ -19,8 +19,14 @@ export default {
 /* ========== 路由分派 ========== */
 async function handleQuery(url) {
   const fundCode = (url.searchParams.get('code') || '').trim();
+
+  // 🔒 严格校验：只接受纯数字的上交所 ETF 代码（5/6位）
+  // 拒绝任何非纯数字输入（如"中证500"、"513310abc"等），防止 API 被误请求封禁
   if (!fundCode) {
     return jsonResponse({ ok: false, error: '缺少 code 参数' }, 400);
+  }
+  if (!/^\d{5,6}$/.test(fundCode)) {
+    return jsonResponse({ ok: false, error: `无效的 ETF 代码格式: ${fundCode}，仅支持纯数字代码` }, 400);
   }
 
   // 暂仅支持上交所 5 开头 ETF
@@ -43,6 +49,19 @@ async function querySSE(fundCode) {
     return jsonResponse({ ok: false, error: compResult.reason.message }, 502);
   }
   const { rows, enriched, computedCount } = compResult.value;
+
+  // 检查是否有申购赎回清单数据
+  if (!rows || rows.length === 0) {
+    return jsonResponse({
+      ok: true,
+      etfName: '',
+      listDate: null,
+      etfPrice: null,
+      rows: [],
+      count: 0,
+      noPcf: true,  // 标识：该基金不提供申购赎回清单
+    });
+  }
 
   // 从 sgInfo 获取交易日信息（可选）
   const listDate = sgResult.status === 'fulfilled' && sgResult.value?.tradingDay
@@ -110,6 +129,24 @@ async function querySSE(fundCode) {
   });
 }
 
+/* ---------- 并发池：限制同时运行的 Promise 数量 ---------- */
+async function asyncPool(items, concurrency, fn) {
+  const results = [];
+  const executing = [];
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    results.push(p);
+    if (concurrency <= items.length) {
+      const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+      executing.push(e);
+      if (executing.length >= concurrency) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.allSettled(results);
+}
+
 /* ---------- 补算缺失价格：主方案 yunhq snap, 备选东财 K-line ---------- */
 async function computeMissingPrices(needPrice, listDate) {
   const priceMap = {};
@@ -117,12 +154,11 @@ async function computeMissingPrices(needPrice, listDate) {
   // 将 listDate "YYYY-MM-DD" 转 "YYYYMMDD" 用于对比
   const listDateCompact = listDate ? listDate.replace(/-/g, '') : '';
 
-  // 主方案：并发查 yunhq snap
-  const snapPromises = needPrice.map(r =>
+  // 主方案：并发查 yunhq snap（限制最多 5 个并发，防止 API 封禁）
+  const snapResults = await asyncPool(needPrice, 5, r =>
     fetchSnapQuote(r.INSTRUMENT_ID)
       .then(snap => snap ? { id: r.INSTRUMENT_ID, snap } : { id: r.INSTRUMENT_ID, snap: null })
   );
-  const snapResults = await Promise.allSettled(snapPromises);
 
   const emNeed = []; // 需要降级到东财的股票
 
@@ -136,9 +172,10 @@ async function computeMissingPrices(needPrice, listDate) {
 
     // 日期对齐判断：snap.date == TRADING_DAY ?
     if (snapDate === listDateCompact) {
-      // ✅ 清单是今天的 + 市场已收盘 → 最新价 = 今日收盘价
-      if (snap.last != null) {
-        priceMap[id] = snap.last;
+      // ✅ snap 日期与 TRADING_DAY 一致 → 使用昨收价（T-1 收盘价）
+      // SSE 每天上午 8:30 更新前一日收盘数据，替代金额以 T-1 收盘价为基准
+      if (snap.prevClose != null) {
+        priceMap[id] = snap.prevClose;
       } else {
         emNeed.push(id);
       }
@@ -152,17 +189,16 @@ async function computeMissingPrices(needPrice, listDate) {
     }
   });
 
-  // 备选方案：日期没对齐或 snap 取不到价格的用东财 K-line
+  // 备选方案：日期没对齐或 snap 取不到价格的用东财 K-line（同样限 5 并发）
   if (emNeed.length > 0) {
     // 用 TRADING_DAY 作为目标日期（东财 K-line 带日期参数，精确返回当日收盘价）
-    const targetDate = listDate; // 不再用 preTradingDay
+    const targetDate = listDate;
     if (targetDate) {
-      const emPromises = emNeed.map(id =>
+      const emResults = await asyncPool(emNeed, 5, id =>
         fetchClosingPriceFromEastMoney(id, targetDate)
           .then(price => ({ id, price }))
           .catch(() => ({ id, price: null }))
       );
-      const emResults = await Promise.allSettled(emPromises);
       let emCount = 0;
       emResults.forEach(pr => {
         if (pr.status === 'fulfilled' && pr.value.price != null) {

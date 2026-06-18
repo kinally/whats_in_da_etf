@@ -203,8 +203,14 @@ function loadFromFile(event) {
 async function reloadLatest() {
   // 输入框有值就当作 ETF 代码查询，否则用当前基金代码
   const searchBox = document.getElementById("searchBox");
-  const code = (searchBox && searchBox.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
+  let code = (searchBox && searchBox.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
   if (!code) return alert("❌ 请在搜索框输入基金代码");
+
+  // 🔒 前端代码校验：只接受纯数字
+  code = code.replace(/\s/g, '');
+  if (!/^\d{5,6}$/.test(code)) {
+    return alert("❌ 无效代码格式：仅支持5~6位纯数字 ETF 代码（如 513310）\n请勿输入文字或混合内容");
+  }
 
   const btn = document.querySelector(".reload-btn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ 刷新中..."; }
@@ -215,6 +221,13 @@ async function reloadLatest() {
     if (!data.ok) throw new Error(data.error);
 
     const rows = data.rows || [];
+
+    // ⚠️ 该基金不提供申购赎回清单
+    if (data.noPcf) {
+      showNoPcfModal(code);
+      if (btn) { btn.disabled = false; btn.textContent = "🔄 刷新"; }
+      return;
+    }
 
     fullPackage = {
       fundCode: code,
@@ -328,6 +341,30 @@ function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+/* ---------- 无申购赎回清单弹窗 ---------- */
+function showNoPcfModal(code) {
+  // 移除已有弹窗
+  const old = document.getElementById("noPcfModal");
+  if (old) old.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "noPcfModal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-icon">⚠️</div>
+      <h3 class="modal-title">该基金不提供申购赎回清单</h3>
+      <p class="modal-body">
+        基金代码 <strong>${escapeHtml(code)}</strong> 未在 SSE 披露申购赎回清单（PCF）数据。<br>
+        常见原因：该基金为 LOF/封闭式基金 或 非 ETF 品种。<br>
+        建议尝试其他 5 开头 ETF 代码（如 513310、516070）。
+      </p>
+      <button class="modal-close-btn" onclick="document.getElementById('noPcfModal').remove()">知道了</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
 }
 
 /* ---------- 安全初始兜底 ---------- */
