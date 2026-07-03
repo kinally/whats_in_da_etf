@@ -456,6 +456,35 @@ th:not(.sorted-asc):not(.sorted-desc) .sort-arrow::after { content: "↕"; opaci
 
 .empty-state p { margin-top: 8px; font-size: 15px; }
 
+/* === Toast === */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--surface);
+  border: 1px solid var(--green);
+  color: var(--text);
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 99999;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.toast-error {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+.toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* === Responsive === */
 @media (max-width: 640px) {
   .app { padding: 16px 12px; }

@@ -5,3 +5,4 @@ node_modules/
 Thumbs.db
 push_api.ps1
 push_api.py
+.atomcode/

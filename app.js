@@ -192,7 +192,7 @@ function loadFromFile(event) {
       document.getElementById("searchBox").value = "";
       renderAll();
     } catch (err) {
-      alert("❌ 文件格式不对，请选择由 fetch_etf.py 生成的 JSON 文件");
+      showToast("文件格式不对，请选择正确的 JSON 文件", "error");
     }
   };
   reader.readAsText(file);
@@ -204,12 +204,12 @@ async function reloadLatest() {
   // 输入框有值就当作 ETF 代码查询，否则用当前基金代码
   const searchBox = document.getElementById("searchBox");
   let code = (searchBox && searchBox.value.trim()) || (fullPackage ? fullPackage.fundCode : "");
-  if (!code) return alert("❌ 请在搜索框输入基金代码");
+  if (!code) return showToast("请在搜索框输入基金代码", "error");
 
   // 🔒 前端代码校验：只接受纯数字
   code = code.replace(/\s/g, '');
   if (!/^\d{5,6}$/.test(code)) {
-    return alert("❌ 无效代码格式：仅支持5~6位纯数字 ETF 代码（如 513310）\n请勿输入文字或混合内容");
+    return showToast("无效代码格式：仅支持5~6位纯数字 ETF 代码（如 513310）", "error");
   }
 
   const btn = document.querySelector(".reload-btn");
@@ -245,7 +245,7 @@ async function reloadLatest() {
     }
     renderAll();
   } catch (e) {
-    alert("❌ 刷新失败: " + e.message);
+    showToast("刷新失败: " + e.message, "error");
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "🔄 刷新"; }
   }
@@ -262,7 +262,7 @@ function showEmpty(msg) {
 
 /* ---------- 导出 CSV ---------- */
 function exportData() {
-  if (!allData || !allData.length) return alert("❌ 没有可导出的数据");
+  if (!allData || !allData.length) return showToast("没有可导出的数据", "error");
 
   const pkg = fullPackage || {};
   const fundCode = pkg.fundCode || "ETF";
@@ -374,3 +374,22 @@ document.addEventListener("DOMContentLoaded", function() {
     setTimeout(initFromGlobals, 50);
   }
 });
+
+/* ---------- Toast 消息提示 ---------- */
+function showToast(msg, type) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.className = "toast" + (type === "error" ? " toast-error" : "");
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+
+  // 触发进入动画
+  requestAnimationFrame(() => toast.classList.add("toast-visible"));
+
+  setTimeout(() => {
+    toast.classList.remove("toast-visible");
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}

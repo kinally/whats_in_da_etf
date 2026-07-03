@@ -221,8 +221,13 @@ async function fetchComponents(fundCode) {
   });
   const resp = await fetch(`https://query.sse.com.cn/commonQuery.do?${params}`, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       Referer: 'https://etf.sse.com.cn/',
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Accept-Encoding': 'gzip, deflate',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
     },
   });
   const text = await resp.text();
@@ -267,8 +272,13 @@ async function fetchSgInfo(fundCode) {
   });
   const resp = await fetch(`https://query.sse.com.cn/commonQuery.do?${params}`, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       Referer: 'https://etf.sse.com.cn/',
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      'Accept-Encoding': 'gzip, deflate',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
     },
   });
   const text = await resp.text();
