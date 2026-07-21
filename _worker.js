@@ -372,13 +372,20 @@ function parsePCF(gbkText, fileDate) {
     rows.push(line);
   }
 
-  // 在数据行中查找所有非空值的位置
+  // 在数据行中查找各列的值（按 2+ 空格分割，保留名字中的空格如"商汤 - W"）
   function findValues(line) {
     const values = [];
-    const re = /\S+/g;
-    let m;
-    while ((m = re.exec(line)) !== null) {
-      values.push({ value: m[0], pos: m.index });
+    // 按 2+ 空格分割，得到各列的值
+    const parts = line.trim().split(/\s{2,}/);
+    let searchPos = 0;
+    for (const part of parts) {
+      if (!part) continue;
+      // 在原始行中定位该值的实际位置
+      const pos = line.indexOf(part, searchPos);
+      if (pos >= 0) {
+        values.push({ value: part, pos });
+        searchPos = pos + part.length;
+      }
     }
     return values;
   }
