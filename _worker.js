@@ -191,12 +191,17 @@ async function querySZSE(fundCode) {
     const domesticNeed = needPrice.filter(r => r._MARKET_CN === '深圳市场' || r._MARKET_CN === '上海市场');
     const foreignNeed = needPrice.filter(r => r._MARKET_CN === '其他市场' || r._MARKET_CN === '香港市场');
 
-    // 内地票：直接走东财 K-line（跳过 yunhq snap — 仅支持上交所，深市会超时）
+    // 内地票：东财 K-line → push2 实时行情兜底
     if (domesticNeed.length > 0) {
-      const emResults = await asyncPool(domesticNeed, 5, r =>
-        fetchClosingPriceFromEastMoney(r.INSTRUMENT_ID, listDate)
-          .then(price => ({ id: r.INSTRUMENT_ID, price }))
-      );
+      const emResults = await asyncPool(domesticNeed, 5, async r => {
+        // 主方案：K-line 历史收盘价
+        let price = await fetchClosingPriceFromEastMoney(r.INSTRUMENT_ID, listDate);
+        // 备选：push2 实时行情昨收价
+        if (price == null) {
+          price = await fetchPrevCloseFromPush2(r.INSTRUMENT_ID);
+        }
+        return { id: r.INSTRUMENT_ID, price };
+      });
       emResults.forEach(pr => {
         if (pr.status === 'fulfilled' && pr.value.price != null) {
           const r = domesticNeed.find(x => x.INSTRUMENT_ID === pr.value.id);
@@ -666,7 +671,7 @@ async function fetchSnapQuote(code) {
   return null;
 }
 
-/* ---------- 东财 K-line 历史收盘价（备选方案） ---------- */
+/* ---------- 东财 K-line 历史收盘价（主方案） ---------- */
 async function fetchClosingPriceFromEastMoney(stockCode, dateStr) {
   // 6xxxxx/688xxx → 上交所 market=1；其余 → 深交所 market=0
   const market = stockCode.startsWith('6') ? 1 : 0;
@@ -677,7 +682,12 @@ async function fetchClosingPriceFromEastMoney(stockCode, dateStr) {
     `&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` +
     `&klt=101&fqt=1&end=${dateCompact}&lmt=1`;
   try {
-    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        Referer: 'https://quote.eastmoney.com/',
+      },
+    });
     if (!resp.ok) return null;
     const data = await resp.json();
     const klines = data?.data?.klines;
@@ -686,6 +696,29 @@ async function fetchClosingPriceFromEastMoney(stockCode, dateStr) {
     // kline: 日期,开盘价,收盘价,最高价,最低价,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
     if (parts[0] === dateStr) return parseFloat(parts[2]);
     return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ---------- 东财 push2 实时昨收价（备选方案） ---------- */
+async function fetchPrevCloseFromPush2(stockCode) {
+  // 6xxxxx/688xxx → 上交所 market=1；其余 → 深交所 market=0
+  const market = stockCode.startsWith('6') ? 1 : 0;
+  const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${market}.${stockCode}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f170,f171`;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        Referer: 'https://quote.eastmoney.com/',
+      },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const d = data?.data;
+    if (!d) return null;
+    // f60 = 昨收价, f43 = 最新价（兜底）
+    return parseFloat(d.f60) || parseFloat(d.f43) || null;
   } catch (_) {
     return null;
   }
