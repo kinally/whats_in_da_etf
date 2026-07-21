@@ -162,6 +162,21 @@ async function querySZSE(fundCode) {
     etfName = q.name || '';
   } catch (_) {}
 
+  // 3b. 获取 ETF 行情（东财 push2 实时行情）
+  let etfPrice = null;
+  try {
+    const q = await fetchSZSEQuote(fundCode);
+    if (q) {
+      etfPrice = {
+        last: q.last,
+        prevClose: q.prevClose,
+        iopv: q.iopv,
+        chgRate: q.chgRate,
+        open: q.open,
+      };
+    }
+  } catch (_) {}
+
   // 4. 补算缺失的替代金额
   //    公式：替代金额 = 股份数量 × 昨收价 × (1 + 申购现金替代保证金率)
   //    内地票（深圳市场/上海市场）→ 东财 K-line
@@ -234,10 +249,40 @@ async function querySZSE(fundCode) {
 
   return jsonResponse({
     ok: true, etfName, listDate,
-    etfPrice: null,  // 深交所行情待后续接入
+    etfPrice: etfPrice || null,
     rows: enriched,
     count: enriched.length,
   });
+}
+
+/* ---------- 深交所 ETF 行情（东财 push2 实时） ---------- */
+async function fetchSZSEQuote(fundCode) {
+  try {
+    // 深交所基金 market=0
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=0.${fundCode}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f60,f170,f171`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const d = data?.data;
+    if (!d || d.f43 == null) return null;
+
+    return {
+      last: parseFloat(d.f43),
+      chgRate: parseFloat(d.f170 ?? d.f48 ?? 0),
+      change: parseFloat(d.f171 ?? d.f47 ?? 0),
+      prevClose: parseFloat(d.f60 ?? 0),
+      open: parseFloat(d.f46 ?? 0),
+      high: parseFloat(d.f44 ?? 0),
+      low: parseFloat(d.f45 ?? 0),
+      // 东财没有 IOPV 字段，留空
+      iopv: null,
+      fundName: d.f58 || '',
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 /* ---------- 回溯查找最近交易日 PCF 文件 ---------- */
@@ -279,16 +324,19 @@ function parsePCF(gbkText, fileDate) {
 
   const header = lines[headerIdx];
 
-  // 动态计算各列起始位置
-  const col = {
-    code: 0,
-    name: header.indexOf('证券简称'),
-    qty: header.indexOf('股份数量'),
-    flag: header.indexOf('现金替代标志'),
-    marginRate: header.indexOf('申购现金替代保证金率'),
-    buyAmount: header.indexOf('申购替代金额'),
-    market: header.indexOf('挂牌市场'),
-  };
+  // 表头中各列名及其在表头中的偏移位置（用于匹配数据行中的值）
+  // 注意：不能直接用 indexOf 位置切片，因为中文字符视觉宽度与 ASCII 不同，表头与数据行不对齐
+  const headerCols = [
+    { name: 'code', key: '证券代码', headerPos: header.indexOf('证券代码') },
+    { name: 'name', key: '证券简称', headerPos: header.indexOf('证券简称') },
+    { name: 'qty', key: '股份数量', headerPos: header.indexOf('股份数量') },
+    { name: 'flag', key: '现金替代标志', headerPos: header.indexOf('现金替代标志') },
+    { name: 'marginRate', key: '申购现金替代保证金率', headerPos: header.indexOf('申购现金替代保证金率') },
+    { name: 'sellMarginRate', key: '赎回现金替代保证金率', headerPos: header.indexOf('赎回现金替代保证金率') },
+    { name: 'buyAmount', key: '申购替代金额', headerPos: header.indexOf('申购替代金额') },
+    { name: 'sellAmount', key: '赎回替代金额', headerPos: header.indexOf('赎回替代金额') },
+    { name: 'market', key: '挂牌市场', headerPos: header.indexOf('挂牌市场') },
+  ];
 
   // 收集表头之后的所有数据行（直到空行或分隔线）
   const rows = [];
@@ -298,19 +346,50 @@ function parsePCF(gbkText, fileDate) {
     rows.push(line);
   }
 
-  const enriched = rows.map(line => {
-    const code = line.slice(col.code, col.name).trim();
-    const name = line.slice(col.name, col.qty).trim();
-    const qtyStr = line.slice(col.qty, col.flag).trim();
-    const flag = line.slice(col.flag, col.marginRate).trim();
-    const marginRateStr = line.slice(col.marginRate, col.buyAmount).trim();
-    let buyAmountStr = '';
-    if (col.market > 0) {
-      buyAmountStr = line.slice(col.buyAmount, col.market).trim();
-    } else {
-      buyAmountStr = line.slice(col.buyAmount).trim();
+  // 在数据行中查找所有非空值的位置
+  function findValues(line) {
+    const values = [];
+    const re = /\S+/g;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      values.push({ value: m[0], pos: m.index });
     }
-    const market = col.market > 0 ? line.slice(col.market).trim() : '';
+    return values;
+  }
+
+  // 将数据行中的值按位置匹配到最近的表头列
+  function matchValuesToColumns(line) {
+    const values = findValues(line);
+    const result = {};
+    let vi = 0;
+
+    for (const col of headerCols) {
+      // 找最接近当前表头列位置的值
+      while (vi < values.length - 1 &&
+             Math.abs(values[vi + 1].pos - col.headerPos) < Math.abs(values[vi].pos - col.headerPos)) {
+        vi++;
+      }
+      // 如果距离超过 20 列，说明该列为空（没有匹配的值）
+      if (vi < values.length && Math.abs(values[vi].pos - col.headerPos) < 25) {
+        result[col.name] = values[vi].value;
+        vi++;
+      } else {
+        result[col.name] = '';
+      }
+    }
+    return result;
+  }
+
+  const enriched = rows.map(line => {
+    const vals = matchValuesToColumns(line);
+
+    const code = vals.code || '';
+    const name = vals.name || '';
+    const qtyStr = vals.qty || '0';
+    const flag = vals.flag || '';
+    const marginRateStr = vals.marginRate || '';
+    const buyAmountStr = vals.buyAmount || '';
+    const market = vals.market || '';
 
     const qty = parseInt(qtyStr.replace(/,/g, ''), 10) || 0;
     const buyAmount = parseFloat(buyAmountStr.replace(/,/g, '')) || 0;
