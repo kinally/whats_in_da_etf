@@ -223,9 +223,30 @@ async function querySZSE(fundCode) {
         if (rate == null) continue; // 汇率查不到则跳过该市场所有股票
 
         const foreignResults = await asyncPool(stocks, 3, async r => {
-          let price = await fetchForeignPrice(r.INSTRUMENT_ID);
+          // 按市场转换代码为 Yahoo Finance 格式
+          let ticker = r.INSTRUMENT_ID;
+          let yahooSuffix = YAHOO_MARKET_SUFFIX[market] || '';
+
+          // "其他市场"可能混合了美股（纯字母）和日股（4位数字）等
+          if (market === '其他市场' && !yahooSuffix) {
+            if (/^\d{4}$/.test(ticker)) {
+              yahooSuffix = '.T'; // 4位数字 → 日股
+            }
+            // 纯字母代码保持原样（美股）
+          }
+
+          if (yahooSuffix) {
+            // 港股：去掉多余前导零，保留 4 位 + .HK（如 00020 → 0020.HK）
+            if (market === '香港市场') {
+              ticker = ticker.replace(/^0+/, '');
+              ticker = ticker.padStart(4, '0');
+            }
+            ticker = ticker + yahooSuffix;
+          }
+          // 其他市场（美股等）直接用原始代码
+          let price = await fetchForeignPrice(ticker);
           if (price == null) {
-            price = await fetchInvestingPrice(r.INSTRUMENT_ID, r.INSTRUMENT_NAME);
+            price = await fetchInvestingPrice(ticker, r.INSTRUMENT_NAME);
           }
           return { id: r.INSTRUMENT_ID, price };
         });
@@ -444,9 +465,11 @@ async function computeMissingPrices(needPrice, listDate) {
   const listDateCompact = listDate ? listDate.replace(/-/g, '') : '';
 
   // 主方案：并发查 yunhq snap（限制最多 5 个并发，防止 API 封禁）
+  // 注意：yunhq 仅支持上交所股票，深市/其他股票会抛异常，通过 .catch 兜住 ID 以便降级到东财
   const snapResults = await asyncPool(needPrice, 5, r =>
     fetchSnapQuote(r.INSTRUMENT_ID)
       .then(snap => snap ? { id: r.INSTRUMENT_ID, snap } : { id: r.INSTRUMENT_ID, snap: null })
+      .catch(() => ({ id: r.INSTRUMENT_ID, snap: null }))
   );
 
   const emNeed = []; // 需要降级到东财的股票
@@ -722,6 +745,15 @@ const MARKET_CURRENCY = {
   '英国市场': 'GBP',
   '德国市场': 'EUR',
   '法国市场': 'EUR',
+};
+// 境外市场 → Yahoo Finance 代码后缀
+const YAHOO_MARKET_SUFFIX = {
+  '香港市场': '.HK',
+  '日本市场': '.T',
+  '英国市场': '.L',
+  '德国市场': '.DE',
+  '法国市场': '.PA',
+  // 其他市场（美股等）不加后缀，直接使用原始代码
 };
 async function fetchExchangeRate(fromCurrency, toCurrency = 'CNY') {
   // 同一个币种不用换算
