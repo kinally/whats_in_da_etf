@@ -62,21 +62,26 @@ function renderHeader(pkg) {
 
 /* ---------- Stats ---------- */
 function renderStats(data) {
-  const sse = data.filter(d => d._MARKET_CN === "上交所").length;
-  const szse = data.filter(d => d._MARKET_CN === "深交所").length;
-  const oversea = data.filter(d => d._MARKET_CN === "境外").length;
+  // 兼容 SSE 旧标签（上交所/深交所/境外）和 SZSE PCF 新标签（深圳市场/上海市场/其他市场/香港市场）
+  const sse = data.filter(d => d._MARKET_CN === "上交所" || d._MARKET_CN === "上海市场").length;
+  const szse = data.filter(d => d._MARKET_CN === "深交所" || d._MARKET_CN === "深圳市场").length;
+  const oversea = data.filter(d => d._MARKET_CN === "境外" || d._MARKET_CN === "其他市场" || d._MARKET_CN === "香港市场").length;
   const computed = data.filter(d => d._AMOUNT_SOURCE === "calc").length;
+  const cashRows = data.filter(d => d._IS_CASH).length;
 
   document.getElementById("statTotal").textContent = data.length;
   document.getElementById("statSse").textContent = sse;
   document.getElementById("statSzse").textContent = szse;
   document.getElementById("statOversea").textContent = oversea;
   document.getElementById("statComputed").textContent = computed;
+  document.getElementById("statCash").textContent = cashRows;
 }
 
 /* ---------- Top 5 Holdings ---------- */
 function renderTopHoldings(data) {
-  const sorted = [...data].sort((a, b) => parseNum(b.SUBSTITUTION_CASH_AMOUNT) - parseNum(a.SUBSTITUTION_CASH_AMOUNT));
+  // 排除 159900 申赎现金（非真实持仓）
+  const holdings = data.filter(d => !d._IS_CASH);
+  const sorted = [...holdings].sort((a, b) => parseNum(b.SUBSTITUTION_CASH_AMOUNT) - parseNum(a.SUBSTITUTION_CASH_AMOUNT));
   const top5 = sorted.slice(0, 5);
   const totalAmt = data.reduce((s, d) => s + parseNum(d.SUBSTITUTION_CASH_AMOUNT), 0);
 
@@ -120,14 +125,18 @@ function renderTable(data, sortKey_, sortAsc_) {
 
   const tbody = document.getElementById("tableBody");
   tbody.innerHTML = sorted.map(item => {
-    const mktClass = item._MARKET_CN === "上交所" ? "sse"
-      : item._MARKET_CN === "深交所" ? "szse" : "oversea";
+    // 兼容 SSE 旧标签和 SZSE PCF 新标签
+    const mktClass = (!item._MARKET_CN || item._MARKET_CN === "上交所" || item._MARKET_CN === "上海市场") ? "sse"
+      : (item._MARKET_CN === "深交所" || item._MARKET_CN === "深圳市场") ? "szse" : "oversea";
     const subCashPct = totalSubCash > 0 ? (parseNum(item.SUBSTITUTION_CASH_AMOUNT) / totalSubCash * 100) : 0;
     const isCalc = item._AMOUNT_SOURCE === "calc";
+    const isCash = item._IS_CASH;
     const amtClass = isCalc ? 'num amt-calc' : 'num amt-api';
     const calcStar = isCalc ? ' ★' : '';
-    return `<tr${isCalc ? ' class="row-calc"' : ''}>
-      <td>${escapeHtml(item.INSTRUMENT_ID)}${calcStar}</td>
+    const cashTag = isCash ? ' <span class="cash-tag">💰 现金</span>' : '';
+    const rowClass = isCash ? ' class="row-cash"' : (isCalc ? ' class="row-calc"' : '');
+    return `<tr${rowClass}>
+      <td>${escapeHtml(item.INSTRUMENT_ID)}${calcStar}${cashTag}</td>
       <td><strong>${escapeHtml(item.INSTRUMENT_NAME)}</strong></td>
       <td class="num">${fmtNum(item.QUANTITY)}</td>
       <td class="${amtClass}">${fmtMoney(item.SUBSTITUTION_CASH_AMOUNT)}</td>
@@ -357,9 +366,9 @@ function showNoPcfModal(code) {
       <div class="modal-icon">⚠️</div>
       <h3 class="modal-title">该基金不提供申购赎回清单</h3>
       <p class="modal-body">
-        基金代码 <strong>${escapeHtml(code)}</strong> 未在 SSE 披露申购赎回清单（PCF）数据。<br>
+        基金代码 <strong>${escapeHtml(code)}</strong> 未在交易所披露申购赎回清单（PCF）数据。<br>
         常见原因：该基金为 LOF/封闭式基金 或 非 ETF 品种。<br>
-        建议尝试其他 5 开头 ETF 代码（如 513310、516070）。
+        建议尝试其他 5 开头（上交所）或 15/16 开头（深交所）ETF 代码。
       </p>
       <button class="modal-close-btn" onclick="document.getElementById('noPcfModal').remove()">知道了</button>
     </div>

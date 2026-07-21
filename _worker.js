@@ -29,11 +29,15 @@ async function handleQuery(url) {
     return jsonResponse({ ok: false, error: `无效的 ETF 代码格式: ${fundCode}，仅支持纯数字代码` }, 400);
   }
 
-  // 暂仅支持上交所 5 开头 ETF
+  // 上交所 5 开头 ETF
   if (/^5\d{5}$/.test(fundCode)) {
     return querySSE(fundCode);
   }
-  return jsonResponse({ ok: false, error: `暂仅支持上交所 5 开头的 ETF，不支持 ${fundCode}` }, 400);
+  // 深交所 15xxxx / 16xxxx ETF
+  if (/^1[5-6]\d{4}$/.test(fundCode)) {
+    return querySZSE(fundCode);
+  }
+  return jsonResponse({ ok: false, error: `暂仅支持上交所 5 开头和深交所 15/16 开头的 ETF，不支持 ${fundCode}` }, 400);
 }
 
 /* ========== 上交所 (5xxxxx) ========== */
@@ -127,6 +131,211 @@ async function querySSE(fundCode) {
     rows: enriched,
     count: enriched.length,
   });
+}
+
+/* ========== 深交所 (15xxxx/16xxxx) ========== */
+
+async function querySZSE(fundCode) {
+  // 1. 向后回退查找最近交易日的 PCF 文件
+  const pcfData = await findLatestSZSE(fundCode);
+  if (!pcfData) {
+    return jsonResponse({
+      ok: true, noPcf: true, etfName: '', listDate: null,
+      etfPrice: null, rows: [], count: 0,
+    });
+  }
+
+  // 2. 解析成分股列表
+  const { rows, enriched, listDate } = parsePCF(pcfData.text, pcfData.date);
+
+  if (!rows || rows.length === 0) {
+    return jsonResponse({
+      ok: true, noPcf: true, etfName: '', listDate: null,
+      etfPrice: null, rows: [], count: 0,
+    });
+  }
+
+  // 3. 获取 ETF 名称（东财 suggest）
+  let etfName = '';
+  try {
+    const q = await fetchQuote(fundCode);
+    etfName = q.name || '';
+  } catch (_) {}
+
+  // 4. 补算缺失的替代金额
+  //    公式：替代金额 = 股份数量 × 昨收价 × (1 + 申购现金替代保证金率)
+  //    内地票（深圳市场/上海市场）→ 东财 K-line
+  //    境外票（其他市场/香港市场）→ Yahoo Finance 主 + investing.com 备选
+  const needPrice = enriched.filter(r => {
+    const qty = parseInt(r.QUANTITY, 10);
+    return qty > 0 && r._AMOUNT_SOURCE === 'missing';
+  });
+
+  if (needPrice.length > 0) {
+    // 按市场分组
+    const domesticNeed = needPrice.filter(r => r._MARKET_CN === '深圳市场' || r._MARKET_CN === '上海市场');
+    const foreignNeed = needPrice.filter(r => r._MARKET_CN === '其他市场' || r._MARKET_CN === '香港市场');
+
+    // 内地票：复用现有补算逻辑查昨收价（东财 K-line 支持沪深两市）
+    if (domesticNeed.length > 0) {
+      const priceMap = await computeMissingPrices(domesticNeed, listDate);
+      domesticNeed.forEach(r => {
+        const price = priceMap[r.INSTRUMENT_ID];
+        if (price != null) {
+          const qty = parseInt(r.QUANTITY, 10);
+          const marginRate = parseFloat(r._MARGIN_RATE) / 100 || 0;
+          const amount = price * qty * (1 + marginRate);
+          r.SUBSTITUTION_CASH_AMOUNT = amount.toFixed(2);
+          r._AMOUNT_SOURCE = 'calc';
+        }
+      });
+    }
+
+    // 境外票：Yahoo Finance → investing.com 降级
+    if (foreignNeed.length > 0) {
+      // 按市场分组，同一个市场用同一个汇率
+      const marketGroups = {};
+      foreignNeed.forEach(r => {
+        const mkt = r._MARKET_CN || '其他市场';
+        if (!marketGroups[mkt]) marketGroups[mkt] = [];
+        marketGroups[mkt].push(r);
+      });
+
+      // 逐市场处理：先查汇率，再查价格
+      for (const [market, stocks] of Object.entries(marketGroups)) {
+        const currency = MARKET_CURRENCY[market] || 'USD';
+        const rate = await fetchExchangeRate(currency);
+        if (rate == null) continue; // 汇率查不到则跳过该市场所有股票
+
+        const foreignResults = await asyncPool(stocks, 3, async r => {
+          let price = await fetchForeignPrice(r.INSTRUMENT_ID);
+          if (price == null) {
+            price = await fetchInvestingPrice(r.INSTRUMENT_ID, r.INSTRUMENT_NAME);
+          }
+          return { id: r.INSTRUMENT_ID, price };
+        });
+
+        foreignResults.forEach(pr => {
+          if (pr.status === 'fulfilled' && pr.value.price != null) {
+            const r = foreignNeed.find(x => x.INSTRUMENT_ID === pr.value.id);
+            if (r) {
+              const qty = parseInt(r.QUANTITY, 10);
+              const marginRate = parseFloat(r._MARGIN_RATE) / 100 || 0;
+              // 价格 × 汇率 → 人民币
+              const amount = pr.value.price * rate * qty * (1 + marginRate);
+              r.SUBSTITUTION_CASH_AMOUNT = amount.toFixed(2);
+              r._AMOUNT_SOURCE = 'calc';
+            }
+          }
+        });
+      }
+    }
+  }
+
+  return jsonResponse({
+    ok: true, etfName, listDate,
+    etfPrice: null,  // 深交所行情待后续接入
+    rows: enriched,
+    count: enriched.length,
+  });
+}
+
+/* ---------- 回溯查找最近交易日 PCF 文件 ---------- */
+async function findLatestSZSE(code, maxDaysBack = 10) {
+  const today = new Date();
+  for (let i = 0; i < maxDaysBack; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const dateStr = `${y}${m}${day}`;
+    const url = `https://reportdocs.static.szse.cn/files/text/etf/ETF${code}${dateStr}.txt`;
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      if (!resp.ok) continue;
+      const buffer = await resp.arrayBuffer();
+      const text = new TextDecoder('gbk').decode(buffer);
+      // 从文件内容提取日期，如 "( 2026-07-21 )"
+      const dateMatch = text.match(/\(\s*(\d{4}-\d{2}-\d{2})\s*\)/);
+      const fileDate = dateMatch ? dateMatch[1] : `${y}-${m}-${day}`;
+      return { date: fileDate, text, rawDate: dateStr };
+    } catch (_) { /* 继续往前推一天 */ }
+  }
+  return null;
+}
+
+/* ---------- 解析 PCF 文件（GBK 固定宽度） ---------- */
+function parsePCF(gbkText, fileDate) {
+  const lines = gbkText.split('\n');
+
+  // 定位成分股表头行
+  const headerIdx = lines.findIndex(l => l.includes('证券代码'));
+  if (headerIdx < 0) return { rows: [], enriched: [], listDate: null };
+
+  const header = lines[headerIdx];
+
+  // 动态计算各列起始位置
+  const col = {
+    code: 0,
+    name: header.indexOf('证券简称'),
+    qty: header.indexOf('股份数量'),
+    flag: header.indexOf('现金替代标志'),
+    marginRate: header.indexOf('申购现金替代保证金率'),
+    buyAmount: header.indexOf('申购替代金额'),
+    market: header.indexOf('挂牌市场'),
+  };
+
+  // 收集表头之后的所有数据行（直到空行或分隔线）
+  const rows = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || line.trim().startsWith('---') || line.trim().startsWith('--')) break;
+    rows.push(line);
+  }
+
+  const enriched = rows.map(line => {
+    const code = line.slice(col.code, col.name).trim();
+    const name = line.slice(col.name, col.qty).trim();
+    const qtyStr = line.slice(col.qty, col.flag).trim();
+    const flag = line.slice(col.flag, col.marginRate).trim();
+    const marginRateStr = line.slice(col.marginRate, col.buyAmount).trim();
+    let buyAmountStr = '';
+    if (col.market > 0) {
+      buyAmountStr = line.slice(col.buyAmount, col.market).trim();
+    } else {
+      buyAmountStr = line.slice(col.buyAmount).trim();
+    }
+    const market = col.market > 0 ? line.slice(col.market).trim() : '';
+
+    const qty = parseInt(qtyStr.replace(/,/g, ''), 10) || 0;
+    const buyAmount = parseFloat(buyAmountStr.replace(/,/g, '')) || 0;
+    const isMissing = qty > 0 && buyAmount === 0;
+    const marginRate = marginRateStr.replace('%', '').trim();
+
+    return {
+      INSTRUMENT_ID: code,
+      INSTRUMENT_NAME: name,
+      QUANTITY: String(qty),
+      SUBSTITUTION_CASH_AMOUNT: buyAmount > 0 ? buyAmount.toFixed(2) : (isMissing ? '' : '0.00'),
+      SUBSTITUTION_FLAG: flag,
+      _MARKET_CN: market,
+      _FLAG_CN: flag,
+      _AMOUNT_SOURCE: buyAmount > 0 ? 'api' : (isMissing ? 'missing' : 'api'),
+      _MARGIN_RATE: marginRate,
+      _IS_CASH: code === '159900',
+    };
+  });
+
+  // 从文件提取日期标题
+  const dateMatch = gbkText.match(/\(\s*(\d{4}-\d{2}-\d{2})\s*\)/);
+  const listDate = dateMatch ? dateMatch[1] : fileDate;
+
+  return { rows, enriched, listDate };
 }
 
 /* ---------- 并发池：限制同时运行的 Promise 数量 ---------- */
@@ -375,6 +584,75 @@ async function fetchQuote(fundCode) {
     return { name };
   } catch (_) {
     return { name: '' };
+  }
+}
+
+/* ---------- 境外票券昨日收盘价（Yahoo Finance 主方案） ---------- */
+async function fetchForeignPrice(ticker) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1d&interval=1d`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const meta = data?.chart?.result?.[0]?.meta;
+    // chartPreviousClose = 昨收价, regularMarketPrice = 最新价（兜底）
+    return meta?.chartPreviousClose || meta?.regularMarketPrice || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ---------- 境外票券昨日收盘价（investing.com 备选方案） ---------- */
+async function fetchInvestingPrice(ticker, name) {
+  try {
+    // 用名称构造 investing.com 页面路径：替换空格为"-"，转小写
+    const slug = (name || ticker).toLowerCase().replace(/\s+/g, '-');
+    const url = `https://cn.investing.com/equities/${slug}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    // 找 data-test="etfPrevClose" 元素的文本内容
+    const match = html.match(/data-test="etfPrevClose"[^>]*>([^<]+)</);
+    if (match) {
+      return parseFloat(match[1].replace(/,/g, '')) || null;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ---------- 汇率查询（免费 exchangerate-api，无 key） ---------- */
+// 市场 → 币种映射
+const MARKET_CURRENCY = {
+  '其他市场': 'USD',
+  '香港市场': 'HKD',
+  '日本市场': 'JPY',
+  '英国市场': 'GBP',
+  '德国市场': 'EUR',
+  '法国市场': 'EUR',
+};
+async function fetchExchangeRate(fromCurrency, toCurrency = 'CNY') {
+  // 同一个币种不用换算
+  if (fromCurrency === toCurrency) return 1;
+  try {
+    const url = `https://api.exchangerate-api.com/v4/latest/${fromCurrency}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data?.rates?.[toCurrency] || null;
+  } catch (_) {
+    return null;
   }
 }
 

@@ -48,6 +48,11 @@
       <span class="stat-value" id="statComputed">--</span>
       <span class="stat-label">补算</span>
     </div>
+    <div class="stat-card">
+      <span class="stat-icon">💰</span>
+      <span class="stat-value" id="statCash">--</span>
+      <span class="stat-label">现金</span>
+    </div>
   </section>
 
   <!-- Top Holdings -->
@@ -60,7 +65,7 @@
   <section class="table-section">
     <h2 class="section-title">📋 全部成分股</h2>
     <div class="table-controls">
-      <span class="table-hint">搜索框输入上交所ETF代码(5开头)后点刷新，或搜索成分股</span>
+      <span class="table-hint">搜索框输入ETF代码(上交所5开头 / 深交所15或16开头)后点刷新，或搜索成分股</span>
       <input type="text" class="search-box" id="searchBox" placeholder="🔍 ETF代码(如513310) 或 成分股代码/名称" oninput="filterTable()">
       <button class="reload-btn" onclick="reloadLatest()">🔄 刷新</button>
     </div>
@@ -93,7 +98,7 @@
     <div class="footer-disclosure">
       <span class="disclosure-badge">🔔 SSE 披露时间统一调整为交易日上午 8:30</span>
     </div>
-    <p class="footer-note">数据来源：上交所 query.sse.com.cn</p>
+    <p class="footer-note">数据来源：上交所 query.sse.com.cn · 深交所 reportdocs.static.szse.cn</p>
     <p class="footer-credit">Design by <strong>みゅう゜</strong> · Code by <strong>某不愿意透露姓名的AI酱~</strong> · 2026</p>
   </footer>
 </div>
