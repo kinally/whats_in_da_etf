@@ -191,17 +191,22 @@ async function querySZSE(fundCode) {
     const domesticNeed = needPrice.filter(r => r._MARKET_CN === '深圳市场' || r._MARKET_CN === '上海市场');
     const foreignNeed = needPrice.filter(r => r._MARKET_CN === '其他市场' || r._MARKET_CN === '香港市场');
 
-    // 内地票：复用现有补算逻辑查昨收价（东财 K-line 支持沪深两市）
+    // 内地票：直接走东财 K-line（跳过 yunhq snap — 仅支持上交所，深市会超时）
     if (domesticNeed.length > 0) {
-      const priceMap = await computeMissingPrices(domesticNeed, listDate);
-      domesticNeed.forEach(r => {
-        const price = priceMap[r.INSTRUMENT_ID];
-        if (price != null) {
-          const qty = parseInt(r.QUANTITY, 10);
-          const marginRate = parseFloat(r._MARGIN_RATE) / 100 || 0;
-          const amount = price * qty * (1 + marginRate);
-          r.SUBSTITUTION_CASH_AMOUNT = amount.toFixed(2);
-          r._AMOUNT_SOURCE = 'calc';
+      const emResults = await asyncPool(domesticNeed, 5, r =>
+        fetchClosingPriceFromEastMoney(r.INSTRUMENT_ID, listDate)
+          .then(price => ({ id: r.INSTRUMENT_ID, price }))
+      );
+      emResults.forEach(pr => {
+        if (pr.status === 'fulfilled' && pr.value.price != null) {
+          const r = domesticNeed.find(x => x.INSTRUMENT_ID === pr.value.id);
+          if (r) {
+            const qty = parseInt(r.QUANTITY, 10);
+            const marginRate = parseFloat(r._MARGIN_RATE) / 100 || 0;
+            const amount = pr.value.price * qty * (1 + marginRate);
+            r.SUBSTITUTION_CASH_AMOUNT = amount.toFixed(2);
+            r._AMOUNT_SOURCE = 'calc';
+          }
         }
       });
     }
