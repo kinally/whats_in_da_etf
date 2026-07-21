@@ -358,19 +358,23 @@ function parsePCF(gbkText, fileDate) {
   }
 
   // 将数据行中的值按位置匹配到最近的表头列
+  // 注意：越靠右的列因中文字符视觉宽度累积偏移越大，阈值需动态递增
   function matchValuesToColumns(line) {
     const values = findValues(line);
     const result = {};
     let vi = 0;
 
-    for (const col of headerCols) {
+    for (let ci = 0; ci < headerCols.length; ci++) {
+      const col = headerCols[ci];
+      const threshold = 25 + ci * 5; // 动态阈值：列越靠右，容忍度越大
+
       // 找最接近当前表头列位置的值
       while (vi < values.length - 1 &&
              Math.abs(values[vi + 1].pos - col.headerPos) < Math.abs(values[vi].pos - col.headerPos)) {
         vi++;
       }
-      // 如果距离超过 20 列，说明该列为空（没有匹配的值）
-      if (vi < values.length && Math.abs(values[vi].pos - col.headerPos) < 25) {
+
+      if (vi < values.length && Math.abs(values[vi].pos - col.headerPos) < threshold) {
         result[col.name] = values[vi].value;
         vi++;
       } else {
