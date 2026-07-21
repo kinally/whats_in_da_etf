@@ -390,29 +390,31 @@ function parsePCF(gbkText, fileDate) {
     return values;
   }
 
-  // 将数据行中的值按位置匹配到最近的表头列
-  // 注意：越靠右的列因中文字符视觉宽度累积偏移越大，阈值需动态递增
+  // 将数据行中的值按 2+ 空格分割后按序映射到表头列
+  // 若值个数不足9（空列），通过检查值间间隙 > 30 来定位空列位置
   function matchValuesToColumns(line) {
-    const values = findValues(line);
+    const parts = line.trim().split(/\s{2,}/);
+    const values = [];
+    let searchPos = 0;
+    for (const part of parts) {
+      if (!part) continue;
+      const pos = line.indexOf(part, searchPos);
+      if (pos >= 0) {
+        values.push({ value: part, pos });
+        searchPos = pos + part.length;
+      }
+    }
+
+    // 8 个值 → 有 1 列为空（始终是赎回现金替代保证金率，第 5 列索引）
+    // 直接在第 5 列插入空值，不依赖间隙检测（代码和名称之间间距也可能 > 30）
+    if (values.length === 8) {
+      values.splice(5, 0, { value: '', pos: values[4].pos + values[4].value.length + 10 });
+    }
+
+    const colNames = ['code', 'name', 'qty', 'flag', 'marginRate', 'sellMarginRate', 'buyAmount', 'sellAmount', 'market'];
     const result = {};
-    let vi = 0;
-
-    for (let ci = 0; ci < headerCols.length; ci++) {
-      const col = headerCols[ci];
-      const threshold = 25 + ci * 5; // 动态阈值：列越靠右，容忍度越大
-
-      // 找最接近当前表头列位置的值
-      while (vi < values.length - 1 &&
-             Math.abs(values[vi + 1].pos - col.headerPos) < Math.abs(values[vi].pos - col.headerPos)) {
-        vi++;
-      }
-
-      if (vi < values.length && Math.abs(values[vi].pos - col.headerPos) < threshold) {
-        result[col.name] = values[vi].value;
-        vi++;
-      } else {
-        result[col.name] = '';
-      }
+    for (let i = 0; i < colNames.length; i++) {
+      result[colNames[i]] = i < values.length ? values[i].value : '';
     }
     return result;
   }
